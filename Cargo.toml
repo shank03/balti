@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/balti-app"]
+default-members = ["crates/balti-app"]
+resolver = "2"
+
+[workspace.dependencies]
+balti-app = { path = "crates/balti-app" }
+
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3.31"
+
+dirs = "6.0.0"
+reqwest = { version = "0.12", features = ["json", "stream", "multipart", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }

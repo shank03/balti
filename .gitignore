@@ -1,0 +1,9 @@
+target
+*.lock
+client.md
+
+.DS_Store
+.idea
+.fleet
+.vscode
+.zed
