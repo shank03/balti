@@ -78,3 +78,77 @@ impl TabNav {
             .map(|(i, _)| i)
     }
 }
+
+pub trait BrowsePrefix: Render {
+    fn name(&self) -> SharedString;
+}
+
+pub struct BucketNav {
+    ptr: usize,
+    views: HashMap<SharedString, AnyView>,
+    stack: Vec<SharedString>,
+}
+
+impl BucketNav {
+    pub fn new<N: BrowsePrefix, T: 'static>(view: Entity<N>, cx: &mut Context<T>) -> Self {
+        let id = view.read(cx).name();
+
+        let mut views = HashMap::new();
+        views.insert(id.clone(), view.into());
+
+        Self {
+            ptr: 0,
+            views: views,
+            stack: vec![id],
+        }
+    }
+
+    pub fn current_view(&self) -> Option<&AnyView> {
+        self.stack
+            .iter()
+            .nth(self.ptr)
+            .and_then(|s| self.views.get(s))
+    }
+
+    pub fn stack(&self) -> &Vec<SharedString> {
+        &self.stack
+    }
+
+    pub fn push<N: BrowsePrefix, T: 'static>(&mut self, view: Entity<N>, cx: &mut Context<T>) {
+        let id = view.read(cx).name();
+
+        self.drop_later_and_views();
+
+        self.stack.push(id.clone());
+        self.views.insert(id, view.into());
+        self.ptr = self.stack().len() - 1;
+
+        cx.notify();
+    }
+
+    pub fn trim(&mut self, index: usize) {
+        self.ptr = index;
+        self.drop_later_and_views();
+    }
+
+    fn drop_later_and_views(&mut self) {
+        // trim stack
+        self.stack = self.stack.drain(..=self.ptr).collect();
+
+        // drop views who's state not in stack
+        let mut views = HashMap::new();
+        for state in self.stack.iter() {
+            if let Some(_) = views.get(state) {
+                // we already have it
+                continue;
+            }
+
+            // else save if it has view
+            if let Some(view) = self.views.get(state) {
+                views.insert(state.clone(), view.clone());
+            }
+        }
+
+        self.views = views;
+    }
+}

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use aws_config::Region;
 use aws_sdk_s3::{
@@ -15,12 +15,12 @@ use crate::{
 };
 
 pub struct S3 {
-    remotes: HashMap<SharedString, S3Remote>,
+    remotes: BTreeMap<SharedString, S3Remote>,
 }
 impl S3 {
     pub fn empty() -> Self {
         Self {
-            remotes: HashMap::new(),
+            remotes: BTreeMap::new(),
         }
     }
 
@@ -38,7 +38,7 @@ impl S3 {
         Ok(())
     }
 
-    pub fn remotes(&self) -> &HashMap<SharedString, S3Remote> {
+    pub fn remotes(&self) -> &BTreeMap<SharedString, S3Remote> {
         &self.remotes
     }
 }
@@ -50,7 +50,7 @@ pub type S3Remote = Arc<__S3Remote>;
 pub struct __S3Remote {
     pub remote_name: SharedString,
     pub client: Client,
-    pub bucket_name: String,
+    pub bucket_name: SharedString,
 }
 
 impl __S3Remote {
@@ -73,18 +73,24 @@ impl __S3Remote {
         Arc::new(Self {
             remote_name,
             client: Client::from_conf(client_config),
-            bucket_name: config.bucket_name,
+            bucket_name: SharedString::new(config.bucket_name),
         })
     }
 }
 
-pub async fn create_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
+#[derive(Debug)]
+pub enum Object {
+    Folder(SharedString),
+    File(SharedString),
+}
+
+pub async fn create_folder(remote: S3Remote, key: &str) -> AppResult<()> {
     let stream = ByteStream::from("fd".as_bytes().to_vec());
 
     let _ = remote
         .client
         .put_object()
-        .bucket(&remote.bucket_name)
+        .bucket(remote.bucket_name.as_str())
         .key(format!("{key}/fd.dat"))
         .body(stream)
         .send()
@@ -93,7 +99,7 @@ pub async fn create_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn upload_file(remote: &S3Remote, to_key: &str, from_path: &PathBuf) -> AppResult<()> {
+pub async fn upload_file(remote: S3Remote, to_key: &str, from_path: &PathBuf) -> AppResult<()> {
     let stream = ByteStream::read_from()
         .path(from_path)
         .buffer_size(4096)
@@ -104,7 +110,7 @@ pub async fn upload_file(remote: &S3Remote, to_key: &str, from_path: &PathBuf) -
     let _ = remote
         .client
         .put_object()
-        .bucket(&remote.bucket_name)
+        .bucket(remote.bucket_name.as_str())
         .key(to_key)
         .body(stream)
         .send()
@@ -114,11 +120,14 @@ pub async fn upload_file(remote: &S3Remote, to_key: &str, from_path: &PathBuf) -
 }
 
 pub async fn download_file(
-    remote: &S3Remote,
+    remote: S3Remote,
     key: &str,
     to_path: &PathBuf,
 ) -> AppResult<ByteStream> {
-    let builder = remote.client.get_object().bucket(&remote.bucket_name);
+    let builder = remote
+        .client
+        .get_object()
+        .bucket(remote.bucket_name.as_str());
     let result = builder
         .key(key)
         .send()
@@ -127,11 +136,11 @@ pub async fn download_file(
     Ok(result.body)
 }
 
-pub async fn delete_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
+pub async fn delete_folder(remote: S3Remote, key: &str) -> AppResult<()> {
     let objects = remote
         .client
         .list_objects_v2()
-        .bucket(&remote.bucket_name)
+        .bucket(remote.bucket_name.as_str())
         .prefix(key)
         .send()
         .await
@@ -157,7 +166,7 @@ pub async fn delete_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
         let _ = remote
             .client
             .delete_objects()
-            .bucket(&remote.bucket_name)
+            .bucket(remote.bucket_name.as_str())
             .delete(delete)
             .send()
             .await
@@ -166,8 +175,11 @@ pub async fn delete_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn delete_file(remote: &S3Remote, key: &str) -> AppResult<()> {
-    let builder = remote.client.delete_object().bucket(&remote.bucket_name);
+pub async fn delete_file(remote: S3Remote, key: &str) -> AppResult<()> {
+    let builder = remote
+        .client
+        .delete_object()
+        .bucket(remote.bucket_name.as_str());
     let _ = builder
         .key(key)
         .send()
@@ -176,24 +188,37 @@ pub async fn delete_file(remote: &S3Remote, key: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn list_folder(remote: &S3Remote, key: &str) -> AppResult<()> {
-    let objects = remote
+pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Object>> {
+    let response = remote
         .client
         .list_objects_v2()
-        .bucket(&remote.bucket_name)
+        .bucket(remote.bucket_name.as_str())
         .delimiter("/")
-        .prefix(key)
+        .prefix(prefix)
         .send()
         .await
         .map_err(|err| AppError::err(err.into_service_error()))?;
 
-    let Some(prefixes) = &objects.common_prefixes else {
-        return Ok(());
+    let mut objects = Vec::new();
+
+    let common_prefixes = response.common_prefixes;
+    let contents = response.contents;
+
+    if let Some(prefixes) = common_prefixes {
+        for prefix in prefixes.into_iter() {
+            if let Some(prefix) = prefix.prefix {
+                objects.push(Object::Folder(prefix.into()));
+            }
+        }
     };
 
-    for prefix in prefixes.into_iter() {
-        dbg!(prefix);
-    }
+    if let Some(contents) = contents {
+        for object in contents.into_iter() {
+            if let Some(key) = object.key {
+                objects.push(Object::File(key.into()));
+            }
+        }
+    };
 
-    Ok(())
+    Ok(objects)
 }

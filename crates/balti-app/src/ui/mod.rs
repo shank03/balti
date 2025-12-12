@@ -11,6 +11,7 @@ use gpui_component::{
 
 use crate::{nav::TabNav, s3::S3, ui::remote::RemoteUi};
 
+mod browse;
 mod remote;
 
 pub struct Rooter {
@@ -158,7 +159,10 @@ impl Render for Rooter {
 
 impl Rooter {
     fn render_tabs(&mut self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
             .child(
                 TabBar::new("remote_tabs")
                     .bg(cx.theme().sidebar)
