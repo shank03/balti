@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, hash_map},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use aws_config::Region;
 use aws_sdk_s3::{
@@ -10,6 +7,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{Delete, ObjectIdentifier},
 };
+use gpui::SharedString;
 
 use crate::{
     config::{S3Config, parse_s3_remotes},
@@ -17,7 +15,7 @@ use crate::{
 };
 
 pub struct S3 {
-    remotes: HashMap<String, S3Remote>,
+    remotes: HashMap<SharedString, S3Remote>,
 }
 impl S3 {
     pub fn empty() -> Self {
@@ -32,26 +30,31 @@ impl S3 {
         self.remotes.clear();
 
         for (remote_name, config) in s3_remotes.into_iter() {
-            self.remotes.insert(remote_name, S3Remote::new(config));
+            let remote_name = SharedString::new(remote_name);
+            self.remotes
+                .insert(remote_name.clone(), __S3Remote::new(remote_name, config));
         }
 
         Ok(())
     }
 
-    pub fn remotes(&self) -> hash_map::Keys<'_, String, S3Remote> {
-        self.remotes.keys()
+    pub fn remotes(&self) -> &HashMap<SharedString, S3Remote> {
+        &self.remotes
     }
 }
 
+pub type S3Remote = Arc<__S3Remote>;
+
 /// Client for handling S3 functions
 /// storage providers
-pub struct S3Remote {
-    client: Client,
-    bucket_name: String,
+pub struct __S3Remote {
+    pub remote_name: SharedString,
+    pub client: Client,
+    pub bucket_name: String,
 }
 
-impl S3Remote {
-    fn new(config: S3Config) -> Self {
+impl __S3Remote {
+    fn new(remote_name: SharedString, config: S3Config) -> S3Remote {
         let creds = Credentials::new(
             config.access_key_id,
             config.secret_access_key,
@@ -67,10 +70,11 @@ impl S3Remote {
             .force_path_style(true)
             .build();
 
-        Self {
+        Arc::new(Self {
+            remote_name,
             client: Client::from_conf(client_config),
             bucket_name: config.bucket_name,
-        }
+        })
     }
 }
 

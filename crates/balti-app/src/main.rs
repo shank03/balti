@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod assets;
 mod config;
 mod err;
+mod nav;
 mod rt;
 mod s3;
 mod theme;
