@@ -1,5 +1,5 @@
 [package]
-name = "balti-app"
+name = "balti"
 version = "0.1.0"
 edition = "2024"
 authors = ["Shashank Verma <shank03>"]
@@ -7,7 +7,7 @@ license = "MIT"
 publish = false
 
 [[bin]]
-name = "balti-app"
+name = "balti"
 path = "src/main.rs"
 
 [dependencies]
@@ -41,3 +41,11 @@ objc2-foundation = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = "0.62"
+
+[package.metadata.bundle-stable]
+icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
+identifier = "com.shank03.balti"
+name = "Balti"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["balti"]
