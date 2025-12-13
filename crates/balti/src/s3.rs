@@ -11,7 +11,7 @@ use chrono::DateTime;
 use gpui::SharedString;
 
 use crate::{
-    config::{S3Config, parse_s3_remotes},
+    config::{S3Config, parse_s3_remotes, save_s3_remotes},
     err::{AppError, AppResult},
 };
 
@@ -39,8 +39,30 @@ impl S3 {
         Ok(())
     }
 
+    pub fn dummy_remote(&self, config: S3Config) -> S3Remote {
+        __S3Remote::new(SharedString::new_static("dummy_test_remote"), config)
+    }
+
+    pub fn add_remote(&mut self, remote_name: SharedString, config: S3Config) {
+        self.remotes
+            .insert(remote_name.clone(), __S3Remote::new(remote_name, config));
+    }
+
     pub fn remotes(&self) -> &BTreeMap<SharedString, S3Remote> {
         &self.remotes
+    }
+
+    pub fn has_remote(&self, remote_name: SharedString) -> bool {
+        self.remotes.contains_key(&remote_name)
+    }
+
+    pub fn save_remotes(&self) {
+        let remotes = self
+            .remotes
+            .iter()
+            .map(|(k, v)| (k.clone(), v.config.clone()))
+            .collect();
+        save_s3_remotes(remotes);
     }
 }
 
@@ -52,21 +74,22 @@ pub struct __S3Remote {
     pub remote_name: SharedString,
     pub client: Client,
     pub bucket_name: SharedString,
+    config: S3Config,
 }
 
 impl __S3Remote {
     fn new(remote_name: SharedString, config: S3Config) -> S3Remote {
         let creds = Credentials::new(
-            config.access_key_id,
-            config.secret_access_key,
+            config.access_key_id.as_str(),
+            config.secret_access_key.as_str(),
             None,
             None,
             "static",
         );
 
         let client_config = Config::builder()
-            .region(Region::new(config.region))
-            .endpoint_url(config.endpoint)
+            .region(Region::new(config.region.as_str().to_owned()))
+            .endpoint_url(config.endpoint.as_str())
             .credentials_provider(creds)
             .force_path_style(true)
             .build();
@@ -74,7 +97,8 @@ impl __S3Remote {
         Arc::new(Self {
             remote_name,
             client: Client::from_conf(client_config),
-            bucket_name: SharedString::new(config.bucket_name),
+            bucket_name: SharedString::new(config.bucket_name.clone()),
+            config,
         })
     }
 }

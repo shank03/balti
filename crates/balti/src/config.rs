@@ -1,20 +1,22 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
     sync::OnceLock,
 };
 
+use gpui::SharedString;
+
 use crate::err::{AppError, AppResult};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct S3Config {
-    pub access_key_id: String,
-    pub secret_access_key: String,
-    pub region: String,
-    pub endpoint: String,
-    pub bucket_name: String,
+    pub access_key_id: SharedString,
+    pub secret_access_key: SharedString,
+    pub region: SharedString,
+    pub endpoint: SharedString,
+    pub bucket_name: SharedString,
 }
 
 const REMOTES_CONFIG: &str = "remotes.toml";
@@ -78,15 +80,56 @@ pub fn parse_s3_remotes() -> AppResult<HashMap<String, S3Config>> {
     Ok(remote_configs)
 }
 
+pub fn save_s3_remotes(remotes: BTreeMap<SharedString, S3Config>) {
+    let config_path = config_dir().join(REMOTES_CONFIG);
+    let mut file = File::create(&config_path).expect("Failed to create config file");
+
+    let configs = remotes
+        .into_iter()
+        .fold(toml::Table::new(), |mut table, (name, config)| {
+            let mut map = toml::Table::new();
+            map.insert(
+                "access_key_id".to_owned(),
+                toml::Value::String(config.access_key_id.to_string()),
+            );
+            map.insert(
+                "secret_access_key".to_owned(),
+                toml::Value::String(config.secret_access_key.to_string()),
+            );
+            map.insert(
+                "region".to_owned(),
+                toml::Value::String(config.region.to_string()),
+            );
+            map.insert(
+                "endpoint".to_owned(),
+                toml::Value::String(config.endpoint.to_string()),
+            );
+            map.insert(
+                "bucket_name".to_owned(),
+                toml::Value::String(config.bucket_name.to_string()),
+            );
+
+            table.insert(name.to_string(), toml::Value::Table(map));
+            table
+        });
+
+    let content = toml::to_string(&configs).expect("Failed to stringify content");
+
+    file.write_all(content.as_bytes())
+        .expect("Failed to save remotes to config");
+
+    tracing::info!("Successfully saved remotes config")
+}
+
 fn get_table_str(
     remote_name: &str,
     table: &toml::map::Map<String, toml::Value>,
     key: &'static str,
-) -> AppResult<String> {
+) -> AppResult<SharedString> {
     table
         .get(key)
         .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
+        .map(|s| s.to_owned().into())
         .ok_or_else(|| {
             AppError::message(format!(
                 "Missing or invalid {key} for remote: {remote_name}"
