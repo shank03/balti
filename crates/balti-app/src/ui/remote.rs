@@ -123,9 +123,11 @@ impl Render for RemoteUi {
                             .overflow_x_scroll()
                             .pr(px(56.))
                             .track_scroll(&self.header_scroll_handle)
+                            .gap_1()
                             .children(stack.into_iter().cloned().enumerate().map(
                                 |(i, (name, _))| {
                                     h_flex()
+                                        .gap_1()
                                         .child(
                                             Button::new(SharedString::new(i.to_string()))
                                                 .label(name.trim_matches('/').to_owned())
@@ -134,7 +136,9 @@ impl Render for RemoteUi {
                                                 .px_1()
                                                 .map(|this| {
                                                     if i == len - 1 {
-                                                        this.text_color(cx.theme().primary)
+                                                        this.bg(cx.theme().primary.opacity(0.2))
+                                                            .border_1()
+                                                            .border_color(cx.theme().primary)
                                                             .font_medium()
                                                     } else {
                                                         this

@@ -129,9 +129,9 @@ impl Render for BrowseUi {
                             .size_full()
                             .items_center()
                             .justify_center()
-                            .child(Icon::new(IconName::LoaderCircle).with_animation(
+                            .child(Icon::new(IconName::LoaderCircle).size_8().with_animation(
                                 ElementId::CodeLocation(*std::panic::Location::caller()),
-                                Animation::new(std::time::Duration::from_secs(2)).repeat(),
+                                Animation::new(std::time::Duration::from_secs(1)).repeat(),
                                 |el, delta| el.transform(Transformation::rotate(percentage(delta))),
                             ))
                     },
