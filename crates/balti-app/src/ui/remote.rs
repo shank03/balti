@@ -1,8 +1,8 @@
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Sizable,
+    ActiveTheme, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    h_flex, v_flex,
+    h_flex,
 };
 
 use crate::{
@@ -19,6 +19,7 @@ pub struct RemoteUi {
     s3_remote: S3Remote,
     nav: Entity<BucketNav>,
     browse_nav: Entity<BrowseNav>,
+    header_scroll_handle: ScrollHandle,
     _subcriptions: Vec<Subscription>,
 }
 
@@ -58,6 +59,7 @@ impl RemoteUi {
             s3_remote,
             nav,
             browse_nav,
+            header_scroll_handle: ScrollHandle::new(),
             _subcriptions: vec![nav_sub],
         }
     }
@@ -74,7 +76,7 @@ impl TabId for RemoteUi {
 }
 
 impl Render for RemoteUi {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stack = self.nav.read(cx).stack();
         let len = stack.len();
 
@@ -82,37 +84,79 @@ impl Render for RemoteUi {
             .flex()
             .flex_col()
             .size_full()
+            .relative()
             .child(
-                h_flex()
-                    .p_2()
+                div()
+                    .absolute()
+                    .top_0()
+                    .flex()
                     .w_full()
+                    .gap_1()
+                    .p_2()
                     .border_b_1()
                     .text_sm()
                     .border_color(cx.theme().sidebar_border)
-                    .children(stack.into_iter().cloned().enumerate().map(|(i, s)| {
-                        h_flex()
-                            .child(
-                                Button::new(SharedString::new(i.to_string()))
-                                    .label(s.trim_matches('/').to_owned())
-                                    .ghost()
-                                    .small()
-                                    .px_1()
-                                    .map(|this| {
-                                        if i == len - 1 {
-                                            this.text_color(cx.theme().primary)
-                                        } else {
-                                            this
-                                        }
-                                    })
-                                    .on_click(cx.listener(move |this, _ev, _window, cx| {
-                                        this.nav.update(cx, |nav, cx| {
-                                            nav.trim(i);
-                                            cx.notify();
-                                        });
-                                    })),
-                            )
-                            .child(div().text_color(cx.theme().muted_foreground).child("/"))
-                    })),
+                    .child(
+                        Button::new("refresh")
+                            .icon(Icon::empty().path("icons/rotate-ccw.svg"))
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _ev, window, cx| {
+                                this.nav.update(cx, |nav, cx| {
+                                    nav.refresh_active_view(|prefix| {
+                                        BrowseUi::view(
+                                            this.browse_nav.clone(),
+                                            this.s3_remote.clone(),
+                                            prefix.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                    cx.notify();
+                                });
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("header")
+                            .flex()
+                            .overflow_x_scroll()
+                            .pr(px(56.))
+                            .track_scroll(&self.header_scroll_handle)
+                            .children(stack.into_iter().cloned().enumerate().map(
+                                |(i, (name, _))| {
+                                    h_flex()
+                                        .child(
+                                            Button::new(SharedString::new(i.to_string()))
+                                                .label(name.trim_matches('/').to_owned())
+                                                .ghost()
+                                                .small()
+                                                .px_1()
+                                                .map(|this| {
+                                                    if i == len - 1 {
+                                                        this.text_color(cx.theme().primary)
+                                                            .font_medium()
+                                                    } else {
+                                                        this
+                                                    }
+                                                })
+                                                .on_click(cx.listener(
+                                                    move |this, _ev, _window, cx| {
+                                                        this.nav.update(cx, |nav, cx| {
+                                                            nav.trim(i);
+                                                            cx.notify();
+                                                        });
+                                                    },
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child("/"),
+                                        )
+                                },
+                            )),
+                    ),
             )
             .when_some(self.nav.read(cx).current_view().cloned(), |this, view| {
                 this.child(view)

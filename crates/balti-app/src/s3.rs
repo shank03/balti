@@ -7,6 +7,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{Delete, ObjectIdentifier},
 };
+use chrono::DateTime;
 use gpui::SharedString;
 
 use crate::{
@@ -81,7 +82,11 @@ impl __S3Remote {
 #[derive(Debug)]
 pub enum Object {
     Folder(SharedString),
-    File(SharedString),
+    File {
+        key: SharedString,
+        size: SharedString,
+        last_modified: Option<SharedString>,
+    },
 }
 
 pub async fn create_folder(remote: S3Remote, key: &str) -> AppResult<()> {
@@ -214,11 +219,44 @@ pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Objec
 
     if let Some(contents) = contents {
         for object in contents.into_iter() {
-            if let Some(key) = object.key {
-                objects.push(Object::File(key.into()));
-            }
+            let size = object.size.map(human_readable_size).unwrap_or_default();
+            let last_modified = object
+                .last_modified
+                .and_then(|d| DateTime::from_timestamp_secs(d.secs()))
+                .map(|d| d.format("%b %d, %Y %-I:%M:%S %p").to_string().into());
+            let key = object.key.unwrap();
+
+            objects.push(Object::File {
+                key: key.into(),
+                size,
+                last_modified,
+            });
         }
     };
 
     Ok(objects)
+}
+
+fn human_readable_size(bytes: i64) -> SharedString {
+    const UNITS: [&str; 9] = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+
+    if bytes == 0 {
+        return SharedString::new_static("0 B");
+    }
+
+    let base = 1024_f64;
+    let exponent = (bytes as f64).log(base).floor() as usize;
+    let exponent = exponent.min(UNITS.len() - 1);
+
+    let size = bytes as f64 / base.powi(exponent as i32);
+
+    // Format with appropriate precision
+    if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[exponent])
+    } else if size >= 10.0 {
+        format!("{:.1} {}", size, UNITS[exponent])
+    } else {
+        format!("{:.2} {}", size, UNITS[exponent])
+    }
+    .into()
 }

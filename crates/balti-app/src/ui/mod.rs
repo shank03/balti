@@ -1,12 +1,11 @@
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Root, Side, Sizable, StyledExt, WindowExt,
+    ActiveTheme, Icon, IconName, Root, Side, Sizable, StyledExt, ThemeMode, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     notification::Notification,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     tab::{Tab, TabBar},
-    v_flex,
 };
 
 use crate::{nav::TabNav, s3::S3, ui::remote::RemoteUi};
@@ -68,96 +67,126 @@ impl Render for Rooter {
         div()
             .flex()
             .size_full()
+            .child(self.render_sidebar(cx))
             .child(
-                Sidebar::new(Side::Left)
-                    .header(
-                        SidebarHeader::new()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .bg(cx.theme().primary)
-                                            .rounded_md()
-                                            .p_0p5()
-                                            .size_6()
-                                            .child(
-                                                Icon::empty()
-                                                    .path("icons/monitor-cloud.svg")
-                                                    .text_color(black()),
-                                            ),
-                                    )
-                                    .child("Balti"),
-                            )
-                            .mt(px(32.)),
-                    )
-                    .child(SidebarGroup::new("Remotes").child(
-                        SidebarMenu::new().children(self.s3.read(cx).remotes().into_iter().map(
-                            |(remote, s3_remote)| {
-                                let s3_remote = s3_remote.clone();
-
-                                SidebarMenuItem::new(remote)
-                                    .icon(Icon::empty().path("icons/server.svg"))
-                                    .on_click(cx.listener(move |this, _ev, window, cx| {
-                                        let s3_remote = s3_remote.clone();
-
-                                        this.tab_nav.update(cx, move |tab_nav, cx| {
-                                            tab_nav.new_tab(
-                                                RemoteUi::view(s3_remote.clone(), window, cx),
-                                                cx,
-                                            );
-                                        });
-                                    }))
-                            },
-                        )),
-                    ))
-                    .footer(
-                        Button::new("create_remote")
-                            .primary()
-                            .label("Create remote")
-                            .icon(IconName::Plus)
-                            .small()
-                            .w_full(),
-                    ),
+                div()
+                    .size_full()
+                    .map(|this| match self.tab_nav.read(cx).active_index() {
+                        Some(index) => this.child(self.render_tabs(*index, cx)),
+                        None => this.child(self.render_empty_tab(cx)),
+                    }),
             )
-            .child(div().size_full().map(|this| {
-                match self.tab_nav.read(cx).active_index() {
-                    Some(index) => this.child(self.render_tabs(*index, cx)),
-                    None => this.child(
-                        div().p_2().child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .w_full()
-                                .items_center()
-                                .justify_center()
-                                .border_color(cx.theme().sidebar_border)
-                                .border_1()
-                                .border_dashed()
-                                .rounded_lg()
-                                .p_4()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .rounded_md()
-                                        .p_2()
-                                        .bg(cx.theme().muted)
-                                        .child(Icon::empty().path("icons/server.svg").size_5()),
-                                )
-                                .child(div().text_lg().child("Select remote"))
-                                .child(div().child("Select remote to start browsing")),
-                        ),
-                    ),
-                }
-            }))
             .when_some(notification_layer, |d, layer| d.child(layer))
     }
 }
 
 impl Rooter {
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        Sidebar::new(Side::Left)
+            .header(
+                SidebarHeader::new()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(cx.theme().primary)
+                                    .rounded_md()
+                                    .p_0p5()
+                                    .size_6()
+                                    .child(
+                                        Icon::empty()
+                                            .path("icons/monitor-cloud.svg")
+                                            .text_color(black()),
+                                    ),
+                            )
+                            .child("Balti"),
+                    )
+                    .mt(px(32.)),
+            )
+            .child(
+                SidebarGroup::new("Remotes").child(
+                    SidebarMenu::new().children(self.s3.read(cx).remotes().into_iter().map(
+                        |(remote, s3_remote)| {
+                            let s3_remote = s3_remote.clone();
+
+                            SidebarMenuItem::new(remote)
+                                .icon(Icon::empty().path("icons/server.svg"))
+                                .on_click(cx.listener(move |this, _ev, window, cx| {
+                                    let s3_remote = s3_remote.clone();
+
+                                    this.tab_nav.update(cx, move |tab_nav, cx| {
+                                        tab_nav.new_tab(
+                                            RemoteUi::view(s3_remote.clone(), window, cx),
+                                            cx,
+                                        );
+                                    });
+                                }))
+                        },
+                    )),
+                ),
+            )
+            .footer(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        Button::new("create_remote")
+                            .primary()
+                            .label("Create remote")
+                            .icon(IconName::Plus)
+                            .small()
+                            .flex_1(),
+                    )
+                    .child(
+                        Button::new("theme-mode")
+                            .icon(Icon::empty().path("icons/circle-shade.svg"))
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|_this, _ev, _window, cx| {
+                                cx.stop_propagation();
+
+                                let new_mode = if cx.theme().mode.is_dark() {
+                                    ThemeMode::Light
+                                } else {
+                                    ThemeMode::Dark
+                                };
+                                crate::theme::change_color_mode(new_mode, cx);
+                            })),
+                    ),
+            )
+    }
+
+    fn render_empty_tab(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().p_2().child(
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .items_center()
+                .justify_center()
+                .border_color(cx.theme().sidebar_border)
+                .border_1()
+                .border_dashed()
+                .rounded_lg()
+                .p_4()
+                .gap_2()
+                .child(
+                    div()
+                        .rounded_md()
+                        .p_2()
+                        .bg(cx.theme().muted)
+                        .child(Icon::empty().path("icons/server.svg").size_5()),
+                )
+                .child(div().text_lg().child("Select remote"))
+                .child(div().child("Select remote to start browsing")),
+        )
+    }
+
     fn render_tabs(&mut self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -165,6 +194,7 @@ impl Rooter {
             .size_full()
             .child(
                 TabBar::new("remote_tabs")
+                    // .suffix(Button::new("suffix").label("Suffix"))
                     .bg(cx.theme().sidebar)
                     .selected_index(index)
                     .on_click(cx.listener(|this, index, _window, cx| {
@@ -184,20 +214,7 @@ impl Rooter {
                                     .child(
                                         h_flex().px_2().gap_3().items_center().child(
                                             div().font_medium().text_sm().child(remote.clone()),
-                                        ), // .child(
-                                           //     Button::new(remote.clone())
-                                           //         .icon(IconName::Close)
-                                           //         .xsmall()
-                                           //         .ghost()
-                                           //         .on_click(cx.listener(
-                                           //             move |this, _ev, _window, cx| {
-                                           //                 this.tab_nav.update(cx, |tab_nav, cx| {
-                                           //                     tab_nav.close_tab(remote.clone(), cx);
-                                           //                     cx.notify();
-                                           //                 });
-                                           //             },
-                                           //         )),
-                                           // ),
+                                        ),
                                     )
                                     .suffix(
                                         Button::new(remote.clone())

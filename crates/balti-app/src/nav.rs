@@ -81,25 +81,37 @@ impl TabNav {
 
 pub trait BrowsePrefix: Render {
     fn name(&self) -> SharedString;
+    fn prefix(&self) -> SharedString;
 }
 
 pub struct BucketNav {
     ptr: usize,
     views: HashMap<SharedString, AnyView>,
-    stack: Vec<SharedString>,
+    stack: Vec<(SharedString, SharedString)>,
 }
 
 impl BucketNav {
     pub fn new<N: BrowsePrefix, T: 'static>(view: Entity<N>, cx: &mut Context<T>) -> Self {
-        let id = view.read(cx).name();
+        let (name, prefix) = view.read_with(cx, |this, _cx| (this.name(), this.prefix()));
 
         let mut views = HashMap::new();
-        views.insert(id.clone(), view.into());
+        views.insert(prefix.clone(), view.into());
 
         Self {
             ptr: 0,
             views: views,
-            stack: vec![id],
+            stack: vec![(name, prefix)],
+        }
+    }
+
+    pub fn refresh_active_view<N: BrowsePrefix>(
+        &mut self,
+        mut f: impl FnMut(&SharedString) -> Entity<N>,
+    ) {
+        let prefix = self.stack.iter().nth(self.ptr);
+        if let Some((_, prefix)) = prefix {
+            let view = f(prefix);
+            self.views.insert(prefix.clone(), view.into());
         }
     }
 
@@ -107,20 +119,20 @@ impl BucketNav {
         self.stack
             .iter()
             .nth(self.ptr)
-            .and_then(|s| self.views.get(s))
+            .and_then(|(_, prefix)| self.views.get(prefix))
     }
 
-    pub fn stack(&self) -> &Vec<SharedString> {
+    pub fn stack(&self) -> &Vec<(SharedString, SharedString)> {
         &self.stack
     }
 
     pub fn push<N: BrowsePrefix, T: 'static>(&mut self, view: Entity<N>, cx: &mut Context<T>) {
-        let id = view.read(cx).name();
+        let (name, prefix) = view.read_with(cx, |this, _cx| (this.name(), this.prefix()));
 
         self.drop_later_and_views();
 
-        self.stack.push(id.clone());
-        self.views.insert(id, view.into());
+        self.stack.push((name, prefix.clone()));
+        self.views.insert(prefix, view.into());
         self.ptr = self.stack().len() - 1;
 
         cx.notify();
@@ -137,15 +149,15 @@ impl BucketNav {
 
         // drop views who's state not in stack
         let mut views = HashMap::new();
-        for state in self.stack.iter() {
-            if let Some(_) = views.get(state) {
+        for (_, prefix) in self.stack.iter() {
+            if let Some(_) = views.get(prefix) {
                 // we already have it
                 continue;
             }
 
             // else save if it has view
-            if let Some(view) = self.views.get(state) {
-                views.insert(state.clone(), view.clone());
+            if let Some(view) = self.views.get(prefix) {
+                views.insert(prefix.clone(), view.clone());
             }
         }
 

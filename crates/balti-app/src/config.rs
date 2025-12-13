@@ -57,8 +57,6 @@ pub fn parse_s3_remotes() -> AppResult<HashMap<String, S3Config>> {
             continue;
         };
 
-        // dbg!(&table.keys().collect::<Vec<_>>());
-
         let access_key_id = get_table_str(&remote_name, table, "access_key_id")?;
         let secret_access_key = get_table_str(&remote_name, table, "secret_access_key")?;
         let region = get_table_str(&remote_name, table, "region")?;
