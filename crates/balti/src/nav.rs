@@ -7,7 +7,7 @@ pub trait TabId: Render {
 }
 
 pub struct TabNav {
-    active_index: Option<usize>,
+    active_index: usize,
     views: HashMap<SharedString, AnyView>,
     tabs: Vec<SharedString>,
 }
@@ -15,13 +15,13 @@ pub struct TabNav {
 impl TabNav {
     pub fn new() -> Self {
         Self {
-            active_index: None,
+            active_index: 0,
             views: HashMap::new(),
             tabs: Vec::new(),
         }
     }
 
-    pub fn active_index(&self) -> &Option<usize> {
+    pub fn active_index(&self) -> &usize {
         &self.active_index
     }
 
@@ -30,52 +30,66 @@ impl TabNav {
     }
 
     pub fn active_view(&self) -> Option<&AnyView> {
-        self.active_index
-            .and_then(|i| self.tabs.iter().nth(i))
+        self.tabs
+            .iter()
+            .nth(self.active_index)
             .and_then(|s| self.views.get(s))
     }
 
-    pub fn select_tab<T: 'static>(&mut self, index: usize, cx: &mut Context<T>) {
-        self.active_index = Some(index);
-        cx.notify();
+    pub fn select_tab(&mut self, index: usize) {
+        self.active_index = index;
     }
 
-    pub fn new_tab<N: TabId>(&mut self, view: Entity<N>, cx: &mut Context<Self>) {
+    pub fn new_tab<N: TabId, T: 'static>(&mut self, view: Entity<N>, cx: &mut Context<T>) {
         let id = view.read(cx).id();
 
-        match self.get_index_for_id(&id) {
-            Some(index) => self.active_index = Some(index),
+        match self
+            .tabs
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s == &&id)
+            .map(|(i, _)| i)
+        {
+            Some(index) => {
+                self.active_index = index;
+            }
             None => {
                 self.tabs.push(id.clone());
                 self.views.insert(id, view.into());
-                self.active_index = Some(self.tabs.len() - 1);
+                self.active_index = self.tabs.len() - 1;
             }
         };
         cx.notify();
     }
 
-    pub fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
+    pub fn close_tab(&mut self, index: usize) {
+        if index == self.active_index {
+            self.close_active_tab();
             return;
         }
 
-        if let Some(active_index) = self.active_index {
-            let id = self.tabs.remove(index);
-            self.views.remove(&id);
-            if index <= active_index {
-                self.active_index = active_index.checked_sub(1);
-            }
-        }
+        let id = self.tabs.remove(index);
+        self.views.remove(&id);
 
-        cx.notify();
+        if self.active_index > index && self.active_index > 0 {
+            self.active_index -= 1;
+        }
     }
 
-    fn get_index_for_id(&self, id: &SharedString) -> Option<usize> {
-        self.tabs
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s == &id)
-            .map(|(i, _)| i)
+    pub fn close_active_tab(&mut self) -> bool {
+        if self.active_index >= self.tabs.len() {
+            return false;
+        }
+
+        let len = self.tabs.len();
+        let id = self.tabs.remove(self.active_index);
+        self.views.remove(&id);
+
+        if self.active_index == len - 1 && self.active_index > 0 {
+            self.active_index -= 1;
+        }
+
+        true
     }
 }
 

@@ -44,7 +44,7 @@ fn init_kb(cx: &mut App) {
 
 pub struct Rooter {
     s3: Entity<S3>,
-    tab_nav: Entity<TabNav>,
+    tab_nav: TabNav,
     remotes: BTreeMap<SharedString, S3Remote>,
 
     focus_handle: FocusHandle,
@@ -54,7 +54,7 @@ pub struct Rooter {
 impl Rooter {
     fn new(focus_handle: FocusHandle, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let s3 = cx.new(|_cx| S3::empty());
-        let tab_nav = cx.new(|_cx| TabNav::new());
+        let tab_nav = TabNav::new();
 
         let win_s3 = s3.clone();
         cx.on_window_closed(move |cx| {
@@ -106,6 +106,40 @@ impl Rooter {
             });
         })
         .detach();
+    }
+
+    fn on_theme_change(&mut self, _ev: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+
+        let new_mode = if cx.theme().mode.is_dark() {
+            ThemeMode::Light
+        } else {
+            ThemeMode::Dark
+        };
+        crate::theme::change_color_mode(new_mode, cx);
+    }
+
+    fn new_tab(&mut self, s3_remote: S3Remote, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+
+        let view = RemoteUi::view(s3_remote, window, cx);
+        self.tab_nav.new_tab(view, cx);
+        cx.notify();
+    }
+
+    fn select_tab(&mut self, index: &usize, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.tab_nav.select_tab(*index);
+        cx.notify();
+    }
+
+    fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.tab_nav.close_tab(index);
+        cx.notify();
+    }
+
+    fn close_active_tab(&mut self) -> bool {
+        self.tab_nav.close_active_tab()
     }
 }
 
@@ -188,8 +222,12 @@ impl Render for Rooter {
             .id("rooter")
             .key_context(APP_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|_this, _: &CloseWindow, window, _cx| {
-                window.remove_window();
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                let closed = this.close_active_tab();
+                cx.notify();
+                if !closed {
+                    window.remove_window();
+                }
             }))
             .on_action(cx.listener(|_this, _: &Quit, window, cx| {
                 window.remove_window();
@@ -199,7 +237,7 @@ impl Render for Rooter {
             .size_full()
             .child(self.render_sidebar(cx))
             .child(div().size_full().map(|this| {
-                if self.tab_nav.read(cx).tabs().is_empty() {
+                if self.tab_nav.tabs().is_empty() {
                     this.child(self.render_empty_tab(cx))
                 } else {
                     this.child(self.render_tabs(cx))
@@ -311,17 +349,7 @@ impl Rooter {
                                         }),
                                 )
                                 .on_click(cx.listener(move |this, _ev, window, cx| {
-                                    cx.stop_propagation();
-                                    let s3_remote = s3_remote.clone();
-
-                                    this.tab_nav.update(cx, move |tab_nav, cx| {
-                                        tab_nav.new_tab(
-                                            RemoteUi::view(s3_remote.clone(), window, cx),
-                                            cx,
-                                        );
-                                        cx.notify();
-                                    });
-                                    cx.notify();
+                                    this.new_tab(s3_remote.clone(), window, cx);
                                 }))
                         },
                     )),
@@ -338,16 +366,7 @@ impl Rooter {
                             .icon(Icon::empty().path("icons/circle-shade.svg"))
                             .small()
                             .ghost()
-                            .on_click(cx.listener(|_this, _ev, _window, cx| {
-                                cx.stop_propagation();
-
-                                let new_mode = if cx.theme().mode.is_dark() {
-                                    ThemeMode::Light
-                                } else {
-                                    ThemeMode::Dark
-                                };
-                                crate::theme::change_color_mode(new_mode, cx);
-                            })),
+                            .on_click(cx.listener(Self::on_theme_change)),
                     ),
             )
     }
@@ -389,38 +408,31 @@ impl Rooter {
                     .menu(true)
                     // .suffix(Button::new("suffix").label("Suffix"))
                     .bg(cx.theme().sidebar)
-                    .selected_index(self.tab_nav.read(cx).active_index().unwrap_or_default())
-                    .on_click(cx.listener(|this, index, _window, cx| {
-                        this.tab_nav.update(cx, |tab_nav, cx| {
-                            tab_nav.select_tab(*index, cx);
-                            cx.notify();
-                        });
-                        cx.notify();
-                    }))
-                    .children(self.tab_nav.read(cx).tabs().iter().enumerate().map(
-                        |(i, remote)| {
-                            let remote = remote.clone();
+                    .selected_index(*self.tab_nav.active_index())
+                    .on_click(cx.listener(Self::select_tab))
+                    .children(
+                        self.tab_nav
+                            .tabs()
+                            .iter()
+                            .enumerate()
+                            .map(|(index, remote)| {
+                                let remote = remote.clone();
 
-                            Tab::new().label(remote.clone()).suffix(
-                                Button::new(remote.clone())
-                                    .mr_2()
-                                    .icon(IconName::Close)
-                                    .xsmall()
-                                    .ghost()
-                                    .on_click(cx.listener(move |this, _ev, _window, cx| {
-                                        this.tab_nav.update(cx, |tab_nav, cx| {
-                                            tab_nav.close_tab(i, cx);
-                                            cx.notify();
-                                        });
-                                        cx.notify();
-                                    })),
-                            )
-                        },
-                    )),
+                                Tab::new().label(remote.clone()).suffix(
+                                    Button::new(remote.clone())
+                                        .mr_2()
+                                        .icon(IconName::Close)
+                                        .xsmall()
+                                        .ghost()
+                                        .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                            this.close_tab(index, cx);
+                                        })),
+                                )
+                            }),
+                    ),
             )
-            .when_some(
-                self.tab_nav.read(cx).active_view().cloned(),
-                |this, view| this.child(view),
-            )
+            .when_some(self.tab_nav.active_view().cloned(), |this, view| {
+                this.child(view)
+            })
     }
 }
