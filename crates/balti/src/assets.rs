@@ -10,6 +10,10 @@ pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if path == "" {
+            return Ok(None);
+        }
+
         Self::get(path)
             .map(|f| Some(f.data))
             .ok_or_else(|| anyhow!("could not find assets at \"{path}\""))
