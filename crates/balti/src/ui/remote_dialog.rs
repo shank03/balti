@@ -7,62 +7,98 @@ use gpui_component::{
     input::{Input, InputState},
 };
 
-use crate::config::S3Config;
+use crate::{config::S3Config, s3::S3Remote};
 
-pub trait CreateRemoteDialog: Render {
+pub trait RemoteDialog: Render {
     fn create_remote(
         &mut self,
         name: SharedString,
         config: S3Config,
+        old_remote: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
 
-    fn test(&mut self, config: S3Config, window: &mut Window, cx: &mut Context<Self>);
+    fn test_config(&mut self, config: S3Config, window: &mut Window, cx: &mut Context<Self>);
 
     fn is_testing(&self) -> bool;
 }
 
-pub fn trigger<T: CreateRemoteDialog>(entity: WeakEntity<T>) -> Button {
+pub fn trigger<T: RemoteDialog>(entity: WeakEntity<T>, remote: Option<S3Remote>) -> Button {
     Button::new("create_remote")
         .primary()
         .icon(IconName::Plus)
         .text_color(black())
         .label("Create remote")
         .on_click(move |_ev, window, cx| {
-            let entity = entity.clone();
-
-            let remote_name_input_state =
-                cx.new(|cx| InputState::new(window, cx).placeholder("cooler_remote"));
-            let access_key_id_input_state =
-                cx.new(|cx| InputState::new(window, cx).placeholder("ABCD1234"));
-            let secret_access_key_input_state =
-                cx.new(|cx| InputState::new(window, cx).placeholder("secret-abcd-xyz-123"));
-            let region_input_state = cx.new(|cx| InputState::new(window, cx).placeholder("auto"));
-            let endpoint_input_state =
-                cx.new(|cx| InputState::new(window, cx).placeholder("https://endpoint.com"));
-            let bucket_name_input_state =
-                cx.new(|cx| InputState::new(window, cx).placeholder("acme-bucket"));
-
-            window.open_dialog(cx, move |dialog, _window, cx| {
-                comp(
-                    dialog,
-                    entity.clone(),
-                    remote_name_input_state.clone(),
-                    access_key_id_input_state.clone(),
-                    secret_access_key_input_state.clone(),
-                    region_input_state.clone(),
-                    endpoint_input_state.clone(),
-                    bucket_name_input_state.clone(),
-                    cx,
-                )
-            });
+            open_dialog(remote.clone(), entity.clone(), window, cx);
         })
 }
 
-fn comp<T: CreateRemoteDialog>(
+pub fn open_dialog<T: RemoteDialog>(
+    remote: Option<S3Remote>,
+    entity: WeakEntity<T>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let remote = remote.clone();
+    let entity = entity.clone();
+
+    let remote_name_input_state =
+        cx.new(|cx| InputState::new(window, cx).placeholder("cooler_remote"));
+    let access_key_id_input_state =
+        cx.new(|cx| InputState::new(window, cx).placeholder("ABCD1234"));
+    let secret_access_key_input_state =
+        cx.new(|cx| InputState::new(window, cx).placeholder("secret-abcd-xyz-123"));
+    let region_input_state = cx.new(|cx| InputState::new(window, cx).placeholder("auto"));
+    let endpoint_input_state =
+        cx.new(|cx| InputState::new(window, cx).placeholder("https://endpoint.com"));
+    let bucket_name_input_state =
+        cx.new(|cx| InputState::new(window, cx).placeholder("acme-bucket"));
+
+    remote.as_ref().map(|r| {
+        remote_name_input_state.update(cx, |input, cx| {
+            input.set_value(&r.remote_name, window, cx);
+        });
+        access_key_id_input_state.update(cx, |input, cx| {
+            input.set_value(&r.config.access_key_id, window, cx);
+        });
+        secret_access_key_input_state.update(cx, |input, cx| {
+            input.set_value(&r.config.secret_access_key, window, cx);
+        });
+        if r.config.region != "auto" {
+            region_input_state.update(cx, |input, cx| {
+                input.set_value(&r.config.region, window, cx);
+            });
+        }
+        endpoint_input_state.update(cx, |input, cx| {
+            input.set_value(&r.config.endpoint, window, cx);
+        });
+        bucket_name_input_state.update(cx, |input, cx| {
+            input.set_value(&r.config.bucket_name, window, cx);
+        });
+    });
+
+    window.open_dialog(cx, move |dialog, _window, cx| {
+        comp(
+            dialog,
+            entity.clone(),
+            remote.as_ref().map(|r| r.remote_name.clone()),
+            remote_name_input_state.clone(),
+            access_key_id_input_state.clone(),
+            secret_access_key_input_state.clone(),
+            region_input_state.clone(),
+            endpoint_input_state.clone(),
+            bucket_name_input_state.clone(),
+            cx,
+        )
+    });
+}
+
+fn comp<T: RemoteDialog>(
     dialog: Dialog,
     entity: WeakEntity<T>,
+    old_remote: Option<SharedString>,
     remote_name_input_state: Entity<InputState>,
     access_key_id_input_state: Entity<InputState>,
     secret_access_key_input_state: Entity<InputState>,
@@ -134,6 +170,7 @@ fn comp<T: CreateRemoteDialog>(
             let endpoint_input_state = endpoint_input_state.clone();
             let bucket_name_input_state = bucket_name_input_state.clone();
 
+            let old_remote = old_remote.clone();
             let entity = _entity.clone();
             let _entity = _entity.clone();
 
@@ -168,7 +205,7 @@ fn comp<T: CreateRemoteDialog>(
                     };
 
                     let _ = _entity.update(cx, |this, cx| {
-                        this.test(config, window, cx);
+                        this.test_config(config, window, cx);
                         cx.notify();
                     });
                 });
@@ -206,7 +243,7 @@ fn comp<T: CreateRemoteDialog>(
                     };
 
                     let _ = entity.update(cx, |this, cx| {
-                        this.create_remote(remote_name, config, window, cx);
+                        this.create_remote(remote_name, config, old_remote.clone(), window, cx);
                         cx.notify();
                     });
                 });

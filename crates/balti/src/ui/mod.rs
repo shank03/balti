@@ -13,6 +13,7 @@ use gpui_component::{
 
 use crate::{
     config::S3Config,
+    err::AppError,
     nav::TabNav,
     rt,
     s3::{self, S3, S3Remote},
@@ -119,6 +120,49 @@ impl Rooter {
         crate::theme::change_color_mode(new_mode, cx);
     }
 
+    fn delete_remote(
+        &mut self,
+        remote_name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task = window.prompt(
+            PromptLevel::Critical,
+            format!("Delete '{}' remote ?", remote_name).as_str(),
+            None,
+            &[
+                PromptButton::Cancel(SharedString::new_static("Cancel")),
+                PromptButton::Ok(SharedString::new_static("Delete")),
+            ],
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            match result {
+                Ok(index) => {
+                    if index == 1 {
+                        let _ = this.update(cx, |this, cx| {
+                            this.tab_nav.close_tab_by_remote(&remote_name, cx);
+                            this.s3.update(cx, |s3, cx| {
+                                s3.remove_remote(remote_name);
+                                s3.save_remotes();
+                                cx.notify();
+                            });
+
+                            this.remotes = this.s3.read(cx).remotes().clone();
+                            cx.notify();
+                        });
+                    }
+                }
+                Err(err) => {
+                    let _ = AppError::err(err);
+                }
+            };
+        })
+        .detach();
+    }
+
     fn new_tab(&mut self, s3_remote: S3Remote, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
 
@@ -143,21 +187,36 @@ impl Rooter {
     }
 }
 
-impl remote_dialog::CreateRemoteDialog for Rooter {
+impl remote_dialog::RemoteDialog for Rooter {
     fn create_remote(
         &mut self,
         name: SharedString,
         config: S3Config,
+        old_remote: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.s3.read(cx).has_remote(name.clone()) {
-            window.push_notification(
-                Notification::warning(format!("Remote with name \"{name}\" already exists")),
-                cx,
-            );
-            return;
-        }
+        match old_remote {
+            Some(old_remote) => {
+                self.tab_nav.close_tab_by_remote(&old_remote, cx);
+                self.s3.update(cx, |s3, cx| {
+                    s3.remove_remote(old_remote);
+                    s3.save_remotes();
+                    cx.notify();
+                });
+            }
+            None => {
+                if self.s3.read(cx).has_remote(name.clone()) {
+                    window.push_notification(
+                        Notification::warning(format!(
+                            "Remote with name \"{name}\" already exists"
+                        )),
+                        cx,
+                    );
+                    return;
+                }
+            }
+        };
 
         self.s3.update(cx, |s3, cx| {
             s3.add_remote(name, config);
@@ -168,7 +227,7 @@ impl remote_dialog::CreateRemoteDialog for Rooter {
         window.close_all_dialogs(cx);
     }
 
-    fn test(
+    fn test_config(
         &mut self,
         config: crate::config::S3Config,
         window: &mut Window,
@@ -280,6 +339,7 @@ impl Rooter {
                     SidebarMenu::new().children(self.s3.read(cx).remotes().into_iter().map(
                         |(remote, s3_remote)| {
                             let entity = cx.weak_entity();
+                            let _s3_remote = s3_remote.clone();
                             let s3_remote = s3_remote.clone();
 
                             SidebarMenuItem::new(remote)
@@ -293,12 +353,15 @@ impl Rooter {
                                             cx.stop_propagation();
                                         })
                                         .dropdown_menu(move |menu, _window, _cx| {
+                                            let s3_remote = _s3_remote.clone();
+                                            let _s3_remote = _s3_remote.clone();
                                             let entity = entity.clone();
                                             let _entity = entity.clone();
 
                                             menu.menu_element(
                                                 Box::new(EmptyAction),
-                                                move |_window, cx| {
+                                                move |_window, _cx| {
+                                                    let s3_remote = _s3_remote.clone();
                                                     let entity = _entity.clone();
 
                                                     div()
@@ -313,11 +376,12 @@ impl Rooter {
                                                         )
                                                         .child(div().child("Edit remote").text_sm())
                                                         .on_click(move |_ev, window, cx| {
-                                                            let entity = entity.clone();
-
-                                                            // window.open_dialog(cx, move |dialog, _window, cx| {
-                                                            //     delete_dialog::comp(dialog, entity.clone(), delete_dialog::DeleteType::Folder(folder_id.clone()), folder_path.clone(), cx)
-                                                            // });
+                                                            remote_dialog::open_dialog(
+                                                                Some(s3_remote.clone()),
+                                                                entity.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
                                                         })
                                                 },
                                             )
@@ -325,6 +389,7 @@ impl Rooter {
                                             .menu_element(
                                                 Box::new(EmptyAction),
                                                 move |_window, cx| {
+                                                    let remote_name = s3_remote.remote_name.clone();
                                                     let entity = entity.clone();
 
                                                     div()
@@ -338,11 +403,17 @@ impl Rooter {
                                                             div().child("Delete remote").text_sm(),
                                                         )
                                                         .on_click(move |_ev, window, cx| {
-                                                            let entity = entity.clone();
-
-                                                            // window.open_dialog(cx, move |dialog, _window, cx| {
-                                                            //     delete_dialog::comp(dialog, entity.clone(), delete_dialog::DeleteType::Folder(folder_id.clone()), folder_path.clone(), cx)
-                                                            // });
+                                                            let _ = entity.clone().update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.delete_remote(
+                                                                        remote_name.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                    cx.notify();
+                                                                },
+                                                            );
                                                         })
                                                 },
                                             )
@@ -360,7 +431,11 @@ impl Rooter {
                     .flex()
                     .w_full()
                     .gap_2()
-                    .child(remote_dialog::trigger(cx.weak_entity()).small().flex_1())
+                    .child(
+                        remote_dialog::trigger(cx.weak_entity(), None)
+                            .small()
+                            .flex_1(),
+                    )
                     .child(
                         Button::new("theme-mode")
                             .icon(Icon::empty().path("icons/circle-shade.svg"))
@@ -394,7 +469,7 @@ impl Rooter {
                 )
                 .child(div().text_lg().child("Select remote"))
                 .child(div().child("Select or create remote to start browsing"))
-                .child(remote_dialog::trigger(cx.weak_entity())),
+                .child(remote_dialog::trigger(cx.weak_entity(), None)),
         )
     }
 

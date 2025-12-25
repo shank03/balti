@@ -62,6 +62,19 @@ impl TabNav {
         cx.notify();
     }
 
+    pub fn close_tab_by_remote<T: 'static>(&mut self, id: &SharedString, cx: &mut Context<T>) {
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s == &id)
+            .map(|(i, _)| i)
+        {
+            self.close_tab(index);
+        }
+        cx.notify();
+    }
+
     pub fn close_tab(&mut self, index: usize) {
         if index == self.active_index {
             self.close_active_tab();

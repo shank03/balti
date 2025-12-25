@@ -48,6 +48,10 @@ impl S3 {
             .insert(remote_name.clone(), __S3Remote::new(remote_name, config));
     }
 
+    pub fn remove_remote(&mut self, remote_name: SharedString) {
+        self.remotes.remove(&remote_name);
+    }
+
     pub fn remotes(&self) -> &BTreeMap<SharedString, S3Remote> {
         &self.remotes
     }
@@ -74,7 +78,7 @@ pub struct __S3Remote {
     pub remote_name: SharedString,
     pub client: Client,
     pub bucket_name: SharedString,
-    config: S3Config,
+    pub config: S3Config,
 }
 
 impl __S3Remote {
