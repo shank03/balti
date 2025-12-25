@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, WindowExt, notification::Notification, scroll::ScrollableElement,
+    ActiveTheme, Icon, IconName, VirtualListScrollHandle, WindowExt, notification::Notification,
+    scroll::ScrollableElement, v_virtual_list,
 };
 
 use crate::{
@@ -16,7 +19,8 @@ pub struct BrowseUi {
     s3_remote: S3Remote,
     prefix: SharedString,
     objects: Vec<s3::Object>,
-    objects_scroll_handle: ScrollHandle,
+    item_sizes: Rc<Vec<Size<Pixels>>>,
+    objects_scroll_handle: VirtualListScrollHandle,
     loading: bool,
     error: Option<AppError>,
 }
@@ -34,7 +38,8 @@ impl BrowseUi {
             s3_remote,
             prefix,
             objects: Vec::new(),
-            objects_scroll_handle: ScrollHandle::new(),
+            item_sizes: Rc::new(Vec::new()),
+            objects_scroll_handle: VirtualListScrollHandle::new(),
             loading: false,
             error: None,
         }
@@ -74,7 +79,11 @@ impl BrowseUi {
                 this.loading = false;
 
                 match result {
-                    Ok(objects) => this.objects = objects,
+                    Ok(objects) => {
+                        let item_sizes = objects.iter().map(|_| size(px(256.), px(40.))).collect();
+                        this.item_sizes = Rc::new(item_sizes);
+                        this.objects = objects
+                    }
                     Err(err) => {
                         window.push_notification(
                             Notification::error(&err.message).title("Failed to fetch objects"),
@@ -177,71 +186,96 @@ impl BrowseUi {
             .flex()
             .flex_col()
             .size_full()
-            .pb_12()
-            .children(self.objects.iter().enumerate().map(|(i, object)| {
-                div()
-                    .id(SharedString::new(i.to_string()))
-                    .flex()
-                    .gap_4()
-                    .items_center()
-                    .justify_between()
-                    .rounded_md()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().sidebar_border)
-                    .text_sm()
-                    .hover(|this| this.bg(cx.theme().secondary_hover))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_4()
-                            .child(match object {
-                                s3::Object::Folder(_) => Icon::new(IconName::Folder),
-                                s3::Object::File { .. } => {
-                                    Icon::empty().path("icons/file-digit.svg")
-                                }
-                            })
-                            .text_sm()
-                            .child(match object {
-                                s3::Object::Folder(prefix) => {
-                                    prefix.replace(self.prefix.as_str(), "")
-                                }
-                                s3::Object::File { key, .. } => {
-                                    key.replace(self.prefix.as_str(), "")
-                                }
-                            }),
-                    )
-                    .child(
-                        div().flex().flex_shrink_0().gap_4().items_center().map(
-                            |this| match object {
-                                s3::Object::Folder(_) => this,
-                                s3::Object::File {
-                                    size,
-                                    last_modified,
-                                    ..
-                                } => this
-                                    .text_color(cx.theme().muted_foreground)
+            .child(
+                v_virtual_list(
+                    cx.entity().clone(),
+                    "browse-list",
+                    self.item_sizes.clone(),
+                    |this, range, _window, cx| {
+                        range
+                            .map(|i| match this.objects.get(i) {
+                                Some(object) => div()
+                                    .id(SharedString::new(i.to_string()))
+                                    .flex()
+                                    .w_full()
+                                    .h(px(40.))
+                                    .gap_4()
+                                    .items_center()
+                                    .justify_between()
+                                    .rounded_md()
+                                    .p_2()
+                                    .pr_8()
+                                    .border_b_1()
+                                    .border_color(cx.theme().sidebar_border)
+                                    .text_sm()
+                                    .hover(|this| this.bg(cx.theme().secondary_hover))
                                     .child(
-                                        div().font_family("JetBrains Mono").child(size.to_string()),
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_4()
+                                            .child(match object {
+                                                s3::Object::Folder(_) => {
+                                                    Icon::new(IconName::Folder)
+                                                }
+                                                s3::Object::File { .. } => {
+                                                    Icon::empty().path("icons/file-digit.svg")
+                                                }
+                                            })
+                                            .text_sm()
+                                            .child(match object {
+                                                s3::Object::Folder(prefix) => {
+                                                    prefix.replace(this.prefix.as_str(), "")
+                                                }
+                                                s3::Object::File { key, .. } => {
+                                                    key.replace(this.prefix.as_str(), "")
+                                                }
+                                            }),
                                     )
-                                    .child(last_modified.clone().unwrap_or_default()),
-                            },
-                        ),
-                    )
-                    .map(|this| match object {
-                        s3::Object::Folder(shared_string) => {
-                            let prefix = shared_string.clone();
-                            this.on_click(cx.listener(move |this, _ev, _window, cx| {
-                                this.browse_nav.update(cx, |_nav, cx| {
-                                    cx.emit(BrowseNavEvent(prefix.clone()));
-                                });
-                            }))
-                        }
-                        s3::Object::File { .. } => this,
-                    })
-            }))
-            .overflow_y_scroll()
-            .track_scroll(&self.objects_scroll_handle)
+                                    .child(div().flex().flex_shrink_0().gap_4().items_center().map(
+                                        |this| {
+                                            match object {
+                                                s3::Object::Folder(_) => this,
+                                                s3::Object::File {
+                                                    size,
+                                                    last_modified,
+                                                    ..
+                                                } => this
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        div()
+                                                            .font_family("JetBrains Mono")
+                                                            .child(size.to_string()),
+                                                    )
+                                                    .child(
+                                                        last_modified.clone().unwrap_or_default(),
+                                                    ),
+                                            }
+                                        },
+                                    ))
+                                    .map(|this| match object {
+                                        s3::Object::Folder(shared_string) => {
+                                            let prefix = shared_string.clone();
+                                            this.on_click(cx.listener(
+                                                move |this, _ev, _window, cx| {
+                                                    this.browse_nav.update(cx, |_nav, cx| {
+                                                        cx.emit(BrowseNavEvent(prefix.clone()));
+                                                    });
+                                                },
+                                            ))
+                                        }
+                                        s3::Object::File { .. } => this,
+                                    }),
+                                None => div().id("i").child("whoops ??"),
+                            })
+                            .collect()
+                    },
+                )
+                .w_full()
+                .track_scroll(&self.objects_scroll_handle),
+            )
+        // .children(self.objects.iter().enumerate().map(|(i, object)| {}))
+        // .overflow_y_scroll()
+        // .track_scroll(&self.objects_scroll_handle)
     }
 }

@@ -40,32 +40,32 @@ impl TabNav {
         cx.notify();
     }
 
-    pub fn new_tab<N: TabId, T: 'static>(&mut self, view: Entity<N>, cx: &mut Context<T>) {
+    pub fn new_tab<N: TabId>(&mut self, view: Entity<N>, cx: &mut Context<Self>) {
         let id = view.read(cx).id();
 
         match self.get_index_for_id(&id) {
             Some(index) => self.active_index = Some(index),
             None => {
                 self.tabs.push(id.clone());
-                self.active_index = Some(self.tabs.len() - 1);
                 self.views.insert(id, view.into());
+                self.active_index = Some(self.tabs.len() - 1);
             }
         };
+        cx.notify();
     }
 
-    pub fn close_tab<T: 'static>(&mut self, id: SharedString, cx: &mut Context<T>) {
-        match self.get_index_for_id(&id) {
-            Some(index) => {
-                if index < self.active_index.unwrap_or_default() {
-                    self.active_index = self
-                        .active_index
-                        .map(|i| i.checked_sub(1).unwrap_or_default());
-                }
-                self.tabs.remove(index);
-                self.views.remove(&id);
+    pub fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        if let Some(active_index) = self.active_index {
+            let id = self.tabs.remove(index);
+            self.views.remove(&id);
+            if index <= active_index {
+                self.active_index = active_index.checked_sub(1);
             }
-            None => (),
-        };
+        }
 
         cx.notify();
     }

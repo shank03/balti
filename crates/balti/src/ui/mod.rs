@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Root, Side, Sizable, StyledExt, ThemeMode, WindowExt,
+    ActiveTheme, Icon, IconName, Root, Side, Sizable, ThemeMode, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     menu::DropdownMenu,
@@ -25,15 +25,34 @@ mod remote_dialog;
 
 actions!([EmptyAction]);
 
+actions!(window, [CloseWindow, Quit]);
+pub const APP_CONTEXT: &str = "Rooter";
+
+fn init_kb(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, Some(APP_CONTEXT))]);
+
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([KeyBinding::new("cmd-q", Quit, Some(APP_CONTEXT))]);
+
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([KeyBinding::new("ctrl-w", CloseWindow, Some(APP_CONTEXT))]);
+
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([KeyBinding::new("alt-f4", Quit, Some(APP_CONTEXT))]);
+}
+
 pub struct Rooter {
     s3: Entity<S3>,
     tab_nav: Entity<TabNav>,
     remotes: BTreeMap<SharedString, S3Remote>,
+
+    focus_handle: FocusHandle,
     is_testing: bool,
 }
 
 impl Rooter {
-    fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(focus_handle: FocusHandle, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let s3 = cx.new(|_cx| S3::empty());
         let tab_nav = cx.new(|_cx| TabNav::new());
 
@@ -51,13 +70,19 @@ impl Rooter {
             s3,
             tab_nav,
             remotes: BTreeMap::new(),
+            focus_handle,
             is_testing: false,
         }
     }
 
     pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
-            let mut view = Self::new(window, cx);
+            init_kb(cx);
+
+            let focus_handle = cx.focus_handle();
+            focus_handle.focus(window);
+
+            let mut view = Self::new(focus_handle, window, cx);
             view.init_remotes(window, cx);
             view
         })
@@ -160,17 +185,26 @@ impl Render for Rooter {
         let notification_layer = Root::render_notification_layer(window, cx);
 
         div()
+            .id("rooter")
+            .key_context(APP_CONTEXT)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|_this, _: &CloseWindow, window, _cx| {
+                window.remove_window();
+            }))
+            .on_action(cx.listener(|_this, _: &Quit, window, cx| {
+                window.remove_window();
+                cx.quit();
+            }))
             .flex()
             .size_full()
             .child(self.render_sidebar(cx))
-            .child(
-                div()
-                    .size_full()
-                    .map(|this| match self.tab_nav.read(cx).active_index() {
-                        Some(index) => this.child(self.render_tabs(*index, cx)),
-                        None => this.child(self.render_empty_tab(cx)),
-                    }),
-            )
+            .child(div().size_full().map(|this| {
+                if self.tab_nav.read(cx).tabs().is_empty() {
+                    this.child(self.render_empty_tab(cx))
+                } else {
+                    this.child(self.render_tabs(cx))
+                }
+            }))
             .when_some(notification_layer, |d, layer| d.child(layer))
             .when_some(dialog_layer, |d, layer| d.child(layer))
     }
@@ -285,7 +319,9 @@ impl Rooter {
                                             RemoteUi::view(s3_remote.clone(), window, cx),
                                             cx,
                                         );
+                                        cx.notify();
                                     });
+                                    cx.notify();
                                 }))
                         },
                     )),
@@ -343,52 +379,44 @@ impl Rooter {
         )
     }
 
-    fn render_tabs(&mut self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tabs(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(
                 TabBar::new("remote_tabs")
+                    .menu(true)
                     // .suffix(Button::new("suffix").label("Suffix"))
                     .bg(cx.theme().sidebar)
-                    .selected_index(index)
+                    .selected_index(self.tab_nav.read(cx).active_index().unwrap_or_default())
                     .on_click(cx.listener(|this, index, _window, cx| {
-                        this.tab_nav.update(cx, move |tab_nav, cx| {
+                        this.tab_nav.update(cx, |tab_nav, cx| {
                             tab_nav.select_tab(*index, cx);
                             cx.notify();
                         });
+                        cx.notify();
                     }))
-                    .children(
-                        self.tab_nav
-                            .read(cx)
-                            .tabs()
-                            .into_iter()
-                            .cloned()
-                            .map(|remote| {
-                                Tab::new()
-                                    .child(
-                                        h_flex().px_2().gap_3().items_center().child(
-                                            div().font_medium().text_sm().child(remote.clone()),
-                                        ),
-                                    )
-                                    .suffix(
-                                        Button::new(remote.clone())
-                                            .mr_2()
-                                            .icon(IconName::Close)
-                                            .xsmall()
-                                            .ghost()
-                                            .on_click(cx.listener(
-                                                move |this, _ev, _window, cx| {
-                                                    this.tab_nav.update(cx, |tab_nav, cx| {
-                                                        tab_nav.close_tab(remote.clone(), cx);
-                                                        cx.notify();
-                                                    });
-                                                },
-                                            )),
-                                    )
-                            }),
-                    ),
+                    .children(self.tab_nav.read(cx).tabs().iter().enumerate().map(
+                        |(i, remote)| {
+                            let remote = remote.clone();
+
+                            Tab::new().label(remote.clone()).suffix(
+                                Button::new(remote.clone())
+                                    .mr_2()
+                                    .icon(IconName::Close)
+                                    .xsmall()
+                                    .ghost()
+                                    .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                        this.tab_nav.update(cx, |tab_nav, cx| {
+                                            tab_nav.close_tab(i, cx);
+                                            cx.notify();
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                        },
+                    )),
             )
             .when_some(
                 self.tab_nav.read(cx).active_view().cloned(),
