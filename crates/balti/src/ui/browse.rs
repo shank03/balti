@@ -1,16 +1,16 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, VirtualListScrollHandle, WindowExt, notification::Notification,
-    scroll::ScrollableElement, v_virtual_list,
+    ActiveTheme, Icon, IconName, VirtualListScrollHandle, WindowExt, checkbox::Checkbox,
+    notification::Notification, scroll::ScrollableElement, v_virtual_list,
 };
 
 use crate::{
     err::AppError,
     nav::BrowsePrefix,
     rt,
-    s3::{self, S3Remote},
+    s3::{self, S3Object, S3Remote, TrimPrefix},
     ui::remote::{BrowseNav, BrowseNavEvent},
 };
 
@@ -18,9 +18,12 @@ pub struct BrowseUi {
     browse_nav: Entity<BrowseNav>,
     s3_remote: S3Remote,
     prefix: SharedString,
-    objects: Vec<s3::Object>,
+
+    objects: Vec<Arc<S3Object>>,
     item_sizes: Rc<Vec<Size<Pixels>>>,
     objects_scroll_handle: VirtualListScrollHandle,
+    checked_objects: HashMap<SharedString, Arc<S3Object>>,
+
     loading: bool,
     error: Option<AppError>,
 }
@@ -40,6 +43,7 @@ impl BrowseUi {
             objects: Vec::new(),
             item_sizes: Rc::new(Vec::new()),
             objects_scroll_handle: VirtualListScrollHandle::new(),
+            checked_objects: HashMap::new(),
             loading: false,
             error: None,
         }
@@ -144,7 +148,7 @@ impl Render for BrowseUi {
                                 |el, delta| el.transform(Transformation::rotate(percentage(delta))),
                             ))
                     },
-                    |this| this.child(self.render_object_item_list(cx)),
+                    |this| this.child(self.render_object_list(cx)),
                 )
                 .vertical_scrollbar(&self.objects_scroll_handle)
                 .horizontal_scrollbar(&self.objects_scroll_handle)
@@ -179,7 +183,7 @@ impl BrowseUi {
         )
     }
 
-    fn render_object_item_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_object_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id(self.prefix.clone())
             .p_2()
@@ -194,78 +198,7 @@ impl BrowseUi {
                     |this, range, _window, cx| {
                         range
                             .map(|i| match this.objects.get(i) {
-                                Some(object) => div()
-                                    .id(SharedString::new(i.to_string()))
-                                    .flex()
-                                    .w_full()
-                                    .h(px(40.))
-                                    .gap_4()
-                                    .items_center()
-                                    .justify_between()
-                                    .rounded_md()
-                                    .p_2()
-                                    .pr_8()
-                                    .border_b_1()
-                                    .border_color(cx.theme().sidebar_border)
-                                    .text_sm()
-                                    .hover(|this| this.bg(cx.theme().secondary_hover))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_4()
-                                            .child(match object {
-                                                s3::Object::Folder(_) => {
-                                                    Icon::new(IconName::Folder)
-                                                }
-                                                s3::Object::File { .. } => {
-                                                    Icon::empty().path("icons/file-digit.svg")
-                                                }
-                                            })
-                                            .text_sm()
-                                            .child(match object {
-                                                s3::Object::Folder(prefix) => {
-                                                    prefix.replace(this.prefix.as_str(), "")
-                                                }
-                                                s3::Object::File { key, .. } => {
-                                                    key.replace(this.prefix.as_str(), "")
-                                                }
-                                            }),
-                                    )
-                                    .child(div().flex().flex_shrink_0().gap_4().items_center().map(
-                                        |this| {
-                                            match object {
-                                                s3::Object::Folder(_) => this,
-                                                s3::Object::File {
-                                                    size,
-                                                    last_modified,
-                                                    ..
-                                                } => this
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        div()
-                                                            .font_family("JetBrains Mono")
-                                                            .child(size.to_string()),
-                                                    )
-                                                    .child(
-                                                        last_modified.clone().unwrap_or_default(),
-                                                    ),
-                                            }
-                                        },
-                                    ))
-                                    .map(|this| match object {
-                                        s3::Object::Folder(shared_string) => {
-                                            let prefix = shared_string.clone();
-                                            this.on_click(cx.listener(
-                                                move |this, _ev, _window, cx| {
-                                                    this.browse_nav.update(cx, |_nav, cx| {
-                                                        cx.emit(BrowseNavEvent(prefix.clone()));
-                                                    });
-                                                },
-                                            ))
-                                        }
-                                        s3::Object::File { .. } => this,
-                                    }),
+                                Some(object) => this.render_object_item(i, object.clone(), cx),
                                 None => div().id("i").child("whoops ??"),
                             })
                             .collect()
@@ -274,8 +207,112 @@ impl BrowseUi {
                 .w_full()
                 .track_scroll(&self.objects_scroll_handle),
             )
-        // .children(self.objects.iter().enumerate().map(|(i, object)| {}))
-        // .overflow_y_scroll()
-        // .track_scroll(&self.objects_scroll_handle)
+    }
+
+    fn render_object_item(
+        &self,
+        i: usize,
+        object: Arc<S3Object>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let _object = object.clone();
+
+        div()
+            .id(SharedString::new(i.to_string()))
+            .flex()
+            .w_full()
+            .h(px(40.))
+            .gap_4()
+            .items_center()
+            .justify_between()
+            .rounded_md()
+            .p_2()
+            .pr_8()
+            .text_sm()
+            .map(|this| {
+                if self.checked_objects.contains_key(object.key()) {
+                    this.border_1().border_color(cx.theme().primary)
+                } else {
+                    this.border_b_1().border_color(cx.theme().sidebar_border)
+                }
+            })
+            .group(i.to_string())
+            .hover(|this| this.bg(cx.theme().secondary_hover.opacity(0.4)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(
+                        Checkbox::new(SharedString::new(format!("chk-{i}")))
+                            .checked(self.checked_objects.contains_key(object.key()))
+                            .map(|this| {
+                                if !self.checked_objects.contains_key(object.key()) {
+                                    this.opacity(0.)
+                                        .group_hover(SharedString::new(i.to_string()), |el| {
+                                            el.opacity(100.)
+                                        })
+                                } else {
+                                    this
+                                }
+                            })
+                            .on_click(cx.listener(move |this, checked, _window, cx| {
+                                cx.stop_propagation();
+
+                                let object = _object.clone();
+                                let key = match object.as_ref() {
+                                    S3Object::Folder(key) => key,
+                                    S3Object::File { key, .. } => key,
+                                };
+
+                                if *checked {
+                                    this.checked_objects.insert(key.clone(), object.clone());
+                                } else {
+                                    this.checked_objects.remove(key);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(match object.as_ref() {
+                        s3::S3Object::Folder(_) => Icon::new(IconName::Folder),
+                        s3::S3Object::File { .. } => Icon::empty().path("icons/file-digit.svg"),
+                    })
+                    .text_sm()
+                    .child(object.key().trim_key_prefix(self.prefix.as_str())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .gap_4()
+                    .items_center()
+                    .map(|this| match object.as_ref() {
+                        s3::S3Object::Folder(_) => this,
+                        s3::S3Object::File {
+                            size,
+                            last_modified,
+                            ..
+                        } => this
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                div()
+                                    // i know this font won't exist for everyone
+                                    .font_family("JetBrains Mono")
+                                    .child(size.to_string()),
+                            )
+                            .child(last_modified.clone().unwrap_or_default()),
+                    }),
+            )
+            .map(|this| match object.as_ref() {
+                s3::S3Object::Folder(key) => {
+                    let prefix = key.clone();
+                    this.on_click(cx.listener(move |this, _ev, _window, cx| {
+                        this.browse_nav.update(cx, |_nav, cx| {
+                            cx.emit(BrowseNavEvent(prefix.clone()));
+                        });
+                    }))
+                }
+                s3::S3Object::File { .. } => this,
+            })
     }
 }

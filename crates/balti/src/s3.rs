@@ -108,13 +108,21 @@ impl __S3Remote {
 }
 
 #[derive(Debug)]
-pub enum Object {
+pub enum S3Object {
     Folder(SharedString),
     File {
         key: SharedString,
         size: SharedString,
         last_modified: Option<SharedString>,
     },
+}
+impl S3Object {
+    pub fn key(&self) -> &SharedString {
+        match self {
+            S3Object::Folder(key) => key,
+            S3Object::File { key, .. } => key,
+        }
+    }
 }
 
 pub async fn create_folder(remote: S3Remote, key: &str) -> AppResult<()> {
@@ -221,7 +229,7 @@ pub async fn delete_file(remote: S3Remote, key: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Object>> {
+pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Arc<S3Object>>> {
     let response = remote
         .client
         .list_objects_v2()
@@ -240,7 +248,7 @@ pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Objec
     if let Some(prefixes) = common_prefixes {
         for prefix in prefixes.into_iter() {
             if let Some(prefix) = prefix.prefix {
-                objects.push(Object::Folder(prefix.into()));
+                objects.push(Arc::new(S3Object::Folder(prefix.into())));
             }
         }
     };
@@ -254,15 +262,31 @@ pub async fn list_objects(remote: S3Remote, prefix: &str) -> AppResult<Vec<Objec
                 .map(|d| d.format("%b %d, %Y %-I:%M:%S %p").to_string().into());
             let key = object.key.unwrap();
 
-            objects.push(Object::File {
+            objects.push(Arc::new(S3Object::File {
                 key: key.into(),
                 size,
                 last_modified,
-            });
+            }));
         }
     };
 
     Ok(objects)
+}
+
+pub trait TrimPrefix {
+    fn trim_key_prefix(&self, key: &str) -> Self;
+}
+
+impl TrimPrefix for SharedString {
+    fn trim_key_prefix(&self, key: &str) -> Self {
+        if self.len() <= key.len() {
+            return self.clone();
+        }
+
+        let key = key.trim_start_matches('/');
+        let trimmed = &self[key.len()..].trim_start_matches('/');
+        SharedString::new(*trimmed)
+    }
 }
 
 fn human_readable_size(bytes: i64) -> SharedString {

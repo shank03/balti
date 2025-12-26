@@ -28,7 +28,6 @@ pub fn trigger<T: RemoteDialog>(entity: WeakEntity<T>, remote: Option<S3Remote>)
     Button::new("create_remote")
         .primary()
         .icon(IconName::Plus)
-        .text_color(black())
         .label("Create remote")
         .on_click(move |_ev, window, cx| {
             open_dialog(remote.clone(), entity.clone(), window, cx);
