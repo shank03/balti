@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod browse;
+mod create_folder_dialog;
 mod remote;
 mod remote_dialog;
 

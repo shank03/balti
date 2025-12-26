@@ -133,13 +133,17 @@ impl BucketNav {
 
     pub fn refresh_active_view<N: BrowsePrefix>(
         &mut self,
-        mut f: impl FnMut(&SharedString) -> Entity<N>,
+        mut for_prefix: impl FnMut(&SharedString) -> Entity<N>,
     ) {
         let prefix = self.stack.iter().nth(self.ptr);
         if let Some((_, prefix)) = prefix {
-            let view = f(prefix);
+            let view = for_prefix(prefix);
             self.views.insert(prefix.clone(), view.into());
         }
+    }
+
+    pub fn active_view(&self) -> Option<&SharedString> {
+        self.stack.iter().nth(self.ptr).map(|(_, prefix)| prefix)
     }
 
     pub fn current_view(&self) -> Option<&AnyView> {

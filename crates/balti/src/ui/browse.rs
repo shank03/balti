@@ -2,8 +2,13 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, VirtualListScrollHandle, WindowExt, checkbox::Checkbox,
-    notification::Notification, scroll::ScrollableElement, v_virtual_list,
+    ActiveTheme, Icon, IconName, Sizable, VirtualListScrollHandle, WindowExt,
+    button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+    input::InputState,
+    notification::Notification,
+    scroll::ScrollableElement,
+    v_virtual_list,
 };
 
 use crate::{
@@ -11,7 +16,10 @@ use crate::{
     nav::BrowsePrefix,
     rt,
     s3::{self, S3Object, S3Remote, TrimPrefix},
-    ui::remote::{BrowseNav, BrowseNavEvent},
+    ui::{
+        create_folder_dialog,
+        remote::{BrowseNav, BrowseNavEvent},
+    },
 };
 
 pub struct BrowseUi {
@@ -25,7 +33,9 @@ pub struct BrowseUi {
     checked_objects: HashMap<SharedString, Arc<S3Object>>,
 
     loading: bool,
+    creating_folder: bool,
     error: Option<AppError>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl BrowseUi {
@@ -33,9 +43,25 @@ impl BrowseUi {
         browse_nav: Entity<BrowseNav>,
         s3_remote: S3Remote,
         prefix: SharedString,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let nav_sub = cx.subscribe_in(&browse_nav, window, |this, _entity, event, window, cx| {
+            match event {
+                BrowseNavEvent::CreateFolder(prefix) => {
+                    if &this.prefix == prefix {
+                        this.new_folder_dialog(window, cx)
+                    }
+                }
+                BrowseNavEvent::UploadFiles(prefix) => {
+                    if &this.prefix == prefix {
+                        // let a = 0;
+                    }
+                }
+                _ => (),
+            };
+        });
+
         Self {
             browse_nav,
             s3_remote,
@@ -45,7 +71,9 @@ impl BrowseUi {
             objects_scroll_handle: VirtualListScrollHandle::new(),
             checked_objects: HashMap::new(),
             loading: false,
+            creating_folder: false,
             error: None,
+            _subscriptions: vec![nav_sub],
         }
     }
 
@@ -102,6 +130,79 @@ impl BrowseUi {
         })
         .detach();
     }
+
+    fn new_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folder_name_input_state =
+            cx.new(|cx| InputState::new(window, cx).placeholder("CoolFolder"));
+
+        let prefix = self.prefix.clone();
+        let entity = cx.weak_entity();
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            create_folder_dialog::dialog(
+                dialog,
+                entity.clone(),
+                prefix.clone(),
+                folder_name_input_state.clone(),
+            )
+        });
+    }
+}
+
+impl create_folder_dialog::CreateFolderDialog for BrowseUi {
+    fn create_folder(
+        &mut self,
+        folder_name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let remote = self.s3_remote.clone();
+        let key = format!(
+            "{}/{}",
+            self.prefix.trim_matches('/'),
+            folder_name
+                .trim()
+                .trim_matches('/')
+                .replace(".", "")
+                .replace("..", "")
+        );
+
+        let task = rt::spawn(
+            cx,
+            async move { s3::create_folder(remote, key.as_str()).await },
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.creating_folder = true;
+                cx.notify();
+            });
+
+            let result = task.await.flatten();
+
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.creating_folder = false;
+
+                match result {
+                    Ok(_) => {
+                        this.list_objects(window, cx);
+                        window.close_dialog(cx);
+                    }
+                    Err(err) => window.push_notification(
+                        Notification::error(err.message).title("Error creating folder"),
+                        cx,
+                    ),
+                };
+
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn is_creating(&self) -> bool {
+        self.creating_folder
+    }
 }
 
 impl BrowsePrefix for BrowseUi {
@@ -131,6 +232,7 @@ impl Render for BrowseUi {
             .size_full()
             .mt_11()
             .overflow_scroll()
+            .child(self.render_browse_status(cx))
             .when_some(self.error.clone(), |this, error| {
                 this.child(self.render_error(error.message, cx))
             })
@@ -308,7 +410,7 @@ impl BrowseUi {
                     let prefix = key.clone();
                     this.on_click(cx.listener(move |this, _ev, _window, cx| {
                         this.browse_nav.update(cx, |_nav, cx| {
-                            cx.emit(BrowseNavEvent(prefix.clone()));
+                            cx.emit(BrowseNavEvent::NewView(prefix.clone()));
                         });
                     }))
                 }

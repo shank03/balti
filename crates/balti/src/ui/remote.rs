@@ -11,7 +11,11 @@ use crate::{
     ui::browse::BrowseUi,
 };
 
-pub struct BrowseNavEvent(pub SharedString);
+pub enum BrowseNavEvent {
+    CreateFolder(SharedString),
+    UploadFiles(SharedString),
+    NewView(SharedString),
+}
 pub struct BrowseNav;
 impl EventEmitter<BrowseNavEvent> for BrowseNav {}
 
@@ -28,18 +32,20 @@ impl RemoteUi {
         let browse_nav = cx.new(|_| BrowseNav {});
 
         let nav_sub = cx.subscribe_in(&browse_nav, window, |this, _entity, event, window, cx| {
-            this.nav.update(cx, |nav, cx| {
-                nav.push(
-                    BrowseUi::view(
-                        this.browse_nav.clone(),
-                        this.s3_remote.clone(),
-                        event.0.clone(),
-                        window,
+            if let BrowseNavEvent::NewView(prefix) = event {
+                this.nav.update(cx, |nav, cx| {
+                    nav.push(
+                        BrowseUi::view(
+                            this.browse_nav.clone(),
+                            this.s3_remote.clone(),
+                            prefix.clone(),
+                            window,
+                            cx,
+                        ),
                         cx,
-                    ),
-                    cx,
-                );
-            });
+                    );
+                });
+            }
         });
 
         let nav = cx.new(|cx| {
@@ -90,6 +96,7 @@ impl Render for RemoteUi {
                     .absolute()
                     .top_0()
                     .flex()
+                    .items_center()
                     .w_full()
                     .gap_1()
                     .p_2()
@@ -120,6 +127,7 @@ impl Render for RemoteUi {
                         div()
                             .id("header")
                             .flex()
+                            .w_full()
                             .overflow_x_scroll()
                             .pr(px(56.))
                             .track_scroll(&self.header_scroll_handle)
@@ -160,6 +168,48 @@ impl Render for RemoteUi {
                                         )
                                 },
                             )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("new_folder")
+                                    .icon(Icon::empty().path("icons/folder-plus.svg"))
+                                    .small()
+                                    .border_color(cx.theme().sidebar_border)
+                                    .outline()
+                                    .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                        if let Some(prefix) =
+                                            this.nav.read(cx).active_view().cloned()
+                                        {
+                                            this.browse_nav.update(cx, |_nav, cx| {
+                                                cx.emit(BrowseNavEvent::CreateFolder(prefix));
+                                            });
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("upload")
+                                    .icon(Icon::empty().path("icons/upload.svg"))
+                                    .small()
+                                    .primary()
+                                    .on_click(cx.listener(move |this, _ev, window, cx| {
+                                        // this.nav.update(cx, |nav, cx| {
+                                        //     nav.refresh_active_view(|prefix| {
+                                        //         BrowseUi::view(
+                                        //             this.browse_nav.clone(),
+                                        //             this.s3_remote.clone(),
+                                        //             prefix.clone(),
+                                        //             window,
+                                        //             cx,
+                                        //         )
+                                        //     });
+                                        //     cx.notify();
+                                        // });
+                                    })),
+                            ),
                     ),
             )
             .when_some(self.nav.read(cx).current_view().cloned(), |this, view| {

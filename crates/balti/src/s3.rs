@@ -126,6 +126,7 @@ impl S3Object {
 }
 
 pub async fn create_folder(remote: S3Remote, key: &str) -> AppResult<()> {
+    let key = key.trim_matches('/');
     let stream = ByteStream::from("fd".as_bytes().to_vec());
 
     let _ = remote
