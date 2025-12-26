@@ -173,7 +173,7 @@ impl Render for RemoteUi {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
+                            .gap_3()
                             .child(
                                 Button::new("new_folder")
                                     .icon(Icon::empty().path("icons/folder-plus.svg"))
@@ -196,18 +196,8 @@ impl Render for RemoteUi {
                                     .small()
                                     .primary()
                                     .on_click(cx.listener(move |this, _ev, window, cx| {
-                                        // this.nav.update(cx, |nav, cx| {
-                                        //     nav.refresh_active_view(|prefix| {
-                                        //         BrowseUi::view(
-                                        //             this.browse_nav.clone(),
-                                        //             this.s3_remote.clone(),
-                                        //             prefix.clone(),
-                                        //             window,
-                                        //             cx,
-                                        //         )
-                                        //     });
-                                        //     cx.notify();
-                                        // });
+                                        todo!();
+                                        cx.notify();
                                     })),
                             ),
                     ),

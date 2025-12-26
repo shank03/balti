@@ -1,13 +1,16 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
+use futures::StreamExt;
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable, VirtualListScrollHandle, WindowExt,
+    ActiveTheme, Icon, IconName, Sizable, StyledExt, VirtualListScrollHandle, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    h_flex,
     input::InputState,
     notification::Notification,
     scroll::ScrollableElement,
+    skeleton::Skeleton,
     v_virtual_list,
 };
 
@@ -17,7 +20,7 @@ use crate::{
     rt,
     s3::{self, S3Object, S3Remote, TrimPrefix},
     ui::{
-        create_folder_dialog,
+        create_folder_dialog, delete_object_dialog,
         remote::{BrowseNav, BrowseNavEvent},
     },
 };
@@ -34,6 +37,7 @@ pub struct BrowseUi {
 
     loading: bool,
     creating_folder: bool,
+    deleting_objects: bool,
     error: Option<AppError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -72,6 +76,7 @@ impl BrowseUi {
             checked_objects: HashMap::new(),
             loading: false,
             creating_folder: false,
+            deleting_objects: false,
             error: None,
             _subscriptions: vec![nav_sub],
         }
@@ -112,6 +117,8 @@ impl BrowseUi {
 
                 match result {
                     Ok(objects) => {
+                        this.checked_objects.clear();
+
                         let item_sizes = objects.iter().map(|_| size(px(256.), px(40.))).collect();
                         this.item_sizes = Rc::new(item_sizes);
                         this.objects = objects
@@ -205,6 +212,86 @@ impl create_folder_dialog::CreateFolderDialog for BrowseUi {
     }
 }
 
+impl delete_object_dialog::DeleteObjectDialog for BrowseUi {
+    fn delete_objects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let remote = self.s3_remote.clone();
+
+        let objects = self
+            .checked_objects
+            .iter()
+            .map(|(_, obj)| obj.clone())
+            .collect::<Vec<_>>();
+
+        let task = rt::spawn(cx, async move {
+            let tasks = objects.into_iter().map(|obj| {
+                let remote = remote.clone();
+                async move {
+                    match obj.as_ref() {
+                        S3Object::Folder(key) => s3::delete_folder(remote, key.as_str()).await,
+                        S3Object::File { key, .. } => s3::delete_file(remote, key.as_str()).await,
+                    }
+                }
+            });
+
+            let results = futures::stream::iter(tasks)
+                .buffer_unordered(8)
+                .collect::<Vec<_>>()
+                .await;
+
+            let mut err_message = String::from("");
+            for result in results.into_iter() {
+                if let Err(err) = result {
+                    err_message.push_str(&err.message);
+                    err_message.push_str(";\n");
+                }
+            }
+
+            if err_message.is_empty() {
+                Ok(())
+            } else {
+                Err(AppError::message(err_message))
+            }
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.deleting_objects = true;
+                cx.notify();
+            });
+
+            let result = task.await.flatten();
+
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.deleting_objects = false;
+
+                match result {
+                    Ok(_) => {
+                        this.list_objects(window, cx);
+
+                        window.close_all_dialogs(cx);
+                        window.push_notification(
+                            Notification::success("Objects deleted")
+                                .icon(Icon::new(IconName::CircleCheck).text_color(green())),
+                            cx,
+                        );
+                    }
+                    Err(err) => window.push_notification(
+                        Notification::error(err.message).title("Failed to delete object(s)"),
+                        cx,
+                    ),
+                };
+
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn is_deleting(&self) -> bool {
+        self.deleting_objects
+    }
+}
+
 impl BrowsePrefix for BrowseUi {
     fn name(&self) -> SharedString {
         if self.prefix == "/" {
@@ -232,7 +319,7 @@ impl Render for BrowseUi {
             .size_full()
             .mt_11()
             .overflow_scroll()
-            .child(self.render_browse_status(cx))
+            .child(deferred(self.render_browse_status(cx)).with_priority(999))
             .when_some(self.error.clone(), |this, error| {
                 this.child(self.render_error(error.message, cx))
             })
@@ -240,15 +327,19 @@ impl Render for BrowseUi {
                 this.when_else(
                     self.loading,
                     |this| {
-                        this.flex()
-                            .size_full()
-                            .items_center()
-                            .justify_center()
-                            .child(Icon::new(IconName::LoaderCircle).size_8().with_animation(
-                                ElementId::CodeLocation(*std::panic::Location::caller()),
-                                Animation::new(std::time::Duration::from_secs(1)).repeat(),
-                                |el, delta| el.transform(Transformation::rotate(percentage(delta))),
-                            ))
+                        this.child(
+                            div()
+                                .p_2()
+                                .pb_10()
+                                .flex()
+                                .flex_col()
+                                .size_full()
+                                .gap_0p5()
+                                .children(
+                                    (0..7)
+                                        .map(|_| Skeleton::new().w_full().h(px(40.)).rounded_md()),
+                                ),
+                        )
                     },
                     |this| this.child(self.render_object_list(cx)),
                 )
@@ -285,13 +376,94 @@ impl BrowseUi {
         )
     }
 
+    fn render_browse_status(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .bottom_0()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .bg(cx.theme().sidebar)
+            .border_t_1()
+            .border_color(cx.theme().sidebar_border)
+            .px_2()
+            .py_1p5()
+            .w_full()
+            .justify_between()
+            .text_sm()
+            .map(|this| {
+                if self.checked_objects.is_empty() {
+                    this.child(div().map(|this| {
+                        if self.loading {
+                            this.child("...")
+                        } else {
+                            this.child(format!("Total: {} item(s)", self.objects.len()))
+                        }
+                    }))
+                } else {
+                    this.bg(cx.theme().primary)
+                        .text_color(cx.theme().primary_foreground)
+                        .child(
+                            Button::new("select-all")
+                                .small()
+                                .outline()
+                                .icon(IconName::Asterisk)
+                                .label("Select all")
+                                .on_click(cx.listener(|this, _ev, _window, cx| {
+                                    this.objects.iter().for_each(|remote| {
+                                        this.checked_objects
+                                            .insert(remote.key().clone(), remote.clone());
+                                    });
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_4()
+                                .child(div().text_sm().font_medium().child(format!(
+                                    "{} item(s) selected",
+                                    self.checked_objects.len()
+                                )))
+                                .child(
+                                    Button::new("clear")
+                                        .small()
+                                        .outline()
+                                        .icon(IconName::Close)
+                                        .label("Clear all")
+                                        .on_click(cx.listener(|this, _ev, _window, cx| {
+                                            this.checked_objects.clear();
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .child(
+                            Button::new("delete")
+                                .small()
+                                .danger()
+                                .icon(IconName::Delete)
+                                .label("Delete items")
+                                .on_click(cx.listener(|this, _ev, window, cx| {
+                                    let count = this.checked_objects.len();
+                                    let entity = cx.weak_entity();
+
+                                    window.open_dialog(cx, move |dialog, _window, _cx| {
+                                        delete_object_dialog::dialog(dialog, count, entity.clone())
+                                    });
+                                })),
+                        )
+                }
+            })
+    }
+
     fn render_object_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id(self.prefix.clone())
             .p_2()
+            .pb_10()
             .flex()
             .flex_col()
             .size_full()
+            .gap_0p5()
             .child(
                 v_virtual_list(
                     cx.entity().clone(),
@@ -362,11 +534,7 @@ impl BrowseUi {
                                 cx.stop_propagation();
 
                                 let object = _object.clone();
-                                let key = match object.as_ref() {
-                                    S3Object::Folder(key) => key,
-                                    S3Object::File { key, .. } => key,
-                                };
-
+                                let key = object.key();
                                 if *checked {
                                     this.checked_objects.insert(key.clone(), object.clone());
                                 } else {

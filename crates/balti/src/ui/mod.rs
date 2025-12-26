@@ -22,6 +22,7 @@ use crate::{
 
 mod browse;
 mod create_folder_dialog;
+mod delete_object_dialog;
 mod remote;
 mod remote_dialog;
 
@@ -326,9 +327,7 @@ impl Rooter {
                                     .p_0p5()
                                     .size_6()
                                     .child(
-                                        Icon::empty()
-                                            .path("icons/monitor-cloud.svg")
-                                            .text_color(black()),
+                                        Icon::empty().path("icons/bucket.svg").text_color(black()),
                                     ),
                             )
                             .child("Balti"),

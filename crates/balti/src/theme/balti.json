@@ -63,7 +63,7 @@
                 "accent.foreground": "#fafafa",
                 "background": "#09090b",
                 "border": "#ffffff1a",
-                "danger.background": "#ff6467",
+                "danger.background": "#e7000b",
                 "danger.foreground": "#fafafa",
                 "danger.hover.background": "#ff7a7d",
                 "danger.active.background": "#ff9093",

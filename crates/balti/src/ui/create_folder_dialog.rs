@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::{
-    Disableable, StyledExt, WindowExt,
+    Disableable, IconName, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     dialog::Dialog,
     form::{field, v_form},
@@ -60,6 +60,8 @@ pub fn dialog<T: CreateFolderDialog>(
                 .primary()
                 .label("Create")
                 .disabled(is_creating)
+                .loading(is_creating)
+                .loading_icon(IconName::LoaderCircle)
                 .on_click(move |_ev, window, cx| {
                     let folder_name = folder_name_input_state.read(cx).value();
 

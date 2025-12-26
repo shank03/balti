@@ -147,7 +147,7 @@ pub async fn upload_file(remote: S3Remote, to_key: &str, from_path: &PathBuf) ->
         .buffer_size(4096)
         .build()
         .await
-        .map_err(AppError::err)?;
+        .map_err(|err| AppError::err(err))?;
 
     let _ = remote
         .client
@@ -194,7 +194,7 @@ pub async fn delete_folder(remote: S3Remote, key: &str) -> AppResult<()> {
             let id = ObjectIdentifier::builder()
                 .key(key)
                 .build()
-                .map_err(AppError::err)?;
+                .map_err(|err| AppError::err(err))?;
             delete_objects.push(id);
         }
     }
@@ -203,7 +203,7 @@ pub async fn delete_folder(remote: S3Remote, key: &str) -> AppResult<()> {
         let delete = Delete::builder()
             .set_objects(Some(delete_objects))
             .build()
-            .map_err(AppError::err)?;
+            .map_err(|err| AppError::err(err))?;
 
         let _ = remote
             .client
