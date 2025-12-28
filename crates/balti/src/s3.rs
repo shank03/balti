@@ -7,16 +7,24 @@ use crate::config::{parse_s3_remotes, save_s3_remotes};
 
 pub struct S3RemoteManager {
     remotes: BTreeMap<Arc<str>, S3Remote>,
+    had_parse_error: bool,
 }
 impl S3RemoteManager {
     pub fn empty() -> Self {
         Self {
             remotes: BTreeMap::new(),
+            had_parse_error: false,
         }
     }
 
     pub fn parse(&mut self) -> AppResult<()> {
-        let s3_remotes = parse_s3_remotes()?;
+        let s3_remotes = match parse_s3_remotes() {
+            Ok(remotes) => remotes,
+            Err(err) => {
+                self.had_parse_error = true;
+                return Err(err);
+            }
+        };
 
         self.remotes.clear();
 
@@ -51,6 +59,12 @@ impl S3RemoteManager {
     }
 
     pub fn save_remotes(&self) {
+        if self.had_parse_error {
+            // don't want to overwrite incorrect syntax with empty data
+            tracing::warn!("Won't save config; had parsing error");
+            return;
+        }
+
         let remotes = self
             .remotes
             .iter()
