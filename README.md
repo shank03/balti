@@ -1,12 +1,22 @@
-# balti-app
+# `Balti`
 
-Created with Create GPUI App.
+S3-compatible bucket explorer client written in [GPUI](https://gpui.rs).
 
-- [`gpui`](https://www.gpui.rs/)
-- [GPUI documentation](https://github.com/zed-industries/zed/tree/main/crates/gpui/docs)
-- [GPUI examples](https://github.com/zed-industries/zed/tree/main/crates/gpui/examples)
+Written by human, with beauty of skill issues.
 
-## Usage
+### Installation
 
-- Ensure Rust is installed - [Rustup](https://rustup.rs/)
-- Run your app with `cargo run`
+Only supports Mac and Linux for now.
+
+### Configuration
+
+Your bucket configurations are stored in `~/.config/balti/remotes.toml` file with the following syntax:
+
+```toml
+[<remote_name>]
+access_key_id = "<id>"
+bucket_name = "<name>"
+endpoint = "<url>"
+region = "<auto by default>"
+secret_access_key = "<secret>"
+```
