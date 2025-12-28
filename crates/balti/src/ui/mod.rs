@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use balti_err::AppError;
+use balti_s3::{S3Config, S3Remote};
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Root, Side, Sizable, ThemeMode, WindowExt,
@@ -11,14 +13,7 @@ use gpui_component::{
     tab::{Tab, TabBar},
 };
 
-use crate::{
-    config::S3Config,
-    err::AppError,
-    nav::TabNav,
-    rt,
-    s3::{self, S3, S3Remote},
-    ui::remote::RemoteUi,
-};
+use crate::{config, nav::TabNav, rt, s3::S3RemoteManager, ui::remote::RemoteUi};
 
 mod browse;
 mod create_folder_dialog;
@@ -28,7 +23,7 @@ mod remote_dialog;
 
 actions!([EmptyAction]);
 
-actions!(window, [CloseWindow, Quit]);
+actions!(window, [CloseWindow, Quit, About, CheckForUpdates]);
 pub const APP_CONTEXT: &str = "Rooter";
 
 fn init_kb(cx: &mut App) {
@@ -46,9 +41,8 @@ fn init_kb(cx: &mut App) {
 }
 
 pub struct Rooter {
-    s3: Entity<S3>,
+    s3_remote_manager: Entity<S3RemoteManager>,
     tab_nav: TabNav,
-    remotes: BTreeMap<SharedString, S3Remote>,
 
     focus_handle: FocusHandle,
     is_testing: bool,
@@ -56,10 +50,10 @@ pub struct Rooter {
 
 impl Rooter {
     fn new(focus_handle: FocusHandle, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let s3 = cx.new(|_cx| S3::empty());
+        let s3_remote_manager = cx.new(|_cx| S3RemoteManager::empty());
         let tab_nav = TabNav::new();
 
-        let win_s3 = s3.clone();
+        let win_s3 = s3_remote_manager.clone();
         cx.on_window_closed(move |cx| {
             win_s3.read(cx).save_remotes();
 
@@ -70,9 +64,8 @@ impl Rooter {
         .detach();
 
         Self {
-            s3,
+            s3_remote_manager,
             tab_nav,
-            remotes: BTreeMap::new(),
             focus_handle,
             is_testing: false,
         }
@@ -94,7 +87,7 @@ impl Rooter {
     fn init_remotes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let _ = this.update_in(cx, |this, window, cx| {
-                this.s3.update(cx, |s3, cx| {
+                this.s3_remote_manager.update(cx, |s3, cx| {
                     if let Err(err) = s3.parse() {
                         window.push_notification(
                             Notification::error(err.message)
@@ -102,11 +95,47 @@ impl Rooter {
                                 .autohide(false),
                             cx,
                         );
-                    } else {
-                        this.remotes = s3.remotes().clone();
                     }
-                })
+                    cx.notify();
+                });
+                cx.notify();
             });
+        })
+        .detach();
+    }
+
+    fn open_about_dialog(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
+        let message = format!("Balti {}", config::get_version_var());
+        let detail = config::get_sha_var();
+
+        let task = window.prompt(
+            PromptLevel::Info,
+            message.as_str(),
+            Some(detail.as_str()),
+            &[PromptButton::Ok(SharedString::new_static("Ok"))],
+            cx,
+        );
+
+        cx.spawn(async move |_this, _cx| {
+            let _ = task.await;
+        })
+        .detach();
+    }
+
+    fn check_for_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let commit_sha = config::get_sha_var();
+
+        let task = rt::spawn(cx, async move {
+            println!("todo: {commit_sha}");
+        });
+
+        cx.spawn_in(window, async move |_this, _cx| {
+            let _result = task.await;
         })
         .detach();
     }
@@ -124,7 +153,7 @@ impl Rooter {
 
     fn delete_remote(
         &mut self,
-        remote_name: SharedString,
+        remote_name: Arc<str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -145,14 +174,14 @@ impl Rooter {
                 Ok(index) => {
                     if index == 1 {
                         let _ = this.update(cx, |this, cx| {
-                            this.tab_nav.close_tab_by_remote(&remote_name, cx);
-                            this.s3.update(cx, |s3, cx| {
-                                s3.remove_remote(remote_name);
+                            this.tab_nav
+                                .close_tab_by_remote(SharedString::new(remote_name.clone()), cx);
+                            this.s3_remote_manager.update(cx, |s3, cx| {
+                                s3.remove_remote(remote_name.into());
                                 s3.save_remotes();
                                 cx.notify();
                             });
 
-                            this.remotes = this.s3.read(cx).remotes().clone();
                             cx.notify();
                         });
                     }
@@ -194,21 +223,24 @@ impl remote_dialog::RemoteDialog for Rooter {
         &mut self,
         name: SharedString,
         config: S3Config,
-        old_remote: Option<SharedString>,
+        old_remote: Option<Arc<str>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let name: Arc<str> = name.into();
+
         match old_remote {
             Some(old_remote) => {
-                self.tab_nav.close_tab_by_remote(&old_remote, cx);
-                self.s3.update(cx, |s3, cx| {
+                self.tab_nav
+                    .close_tab_by_remote(old_remote.clone().into(), cx);
+                self.s3_remote_manager.update(cx, |s3, cx| {
                     s3.remove_remote(old_remote);
                     s3.save_remotes();
                     cx.notify();
                 });
             }
             None => {
-                if self.s3.read(cx).has_remote(name.clone()) {
+                if self.s3_remote_manager.read(cx).has_remote(name.clone()) {
                     window.push_notification(
                         Notification::warning(format!(
                             "Remote with name \"{name}\" already exists"
@@ -220,23 +252,17 @@ impl remote_dialog::RemoteDialog for Rooter {
             }
         };
 
-        self.s3.update(cx, |s3, cx| {
+        self.s3_remote_manager.update(cx, |s3, cx| {
             s3.add_remote(name, config);
             s3.save_remotes();
             cx.notify();
         });
-        self.remotes = self.s3.read(cx).remotes().clone();
         window.close_all_dialogs(cx);
     }
 
-    fn test_config(
-        &mut self,
-        config: crate::config::S3Config,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let remote = self.s3.read(cx).dummy_remote(config);
-        let task = rt::spawn(cx, async move { s3::list_objects(remote, "").await });
+    fn test_config(&mut self, config: S3Config, window: &mut Window, cx: &mut Context<Self>) {
+        let remote = self.s3_remote_manager.read(cx).dummy_remote(config);
+        let task = rt::spawn(cx, async move { balti_s3::list_objects(remote, "").await });
 
         cx.spawn_in(window, async move |this, cx| {
             let _ = this.update(cx, |this, cx| {
@@ -283,6 +309,8 @@ impl Render for Rooter {
             .id("rooter")
             .key_context(APP_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::open_about_dialog))
+            .on_action(cx.listener(Self::check_for_updates))
             .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                 let closed = this.close_active_tab();
                 cx.notify();
@@ -334,9 +362,9 @@ impl Rooter {
                     )
                     .mt(px(32.)),
             )
-            .child(
-                SidebarGroup::new("Remotes").child(
-                    SidebarMenu::new().children(self.s3.read(cx).remotes().into_iter().map(
+            .child(SidebarGroup::new("Remotes").child(
+                SidebarMenu::new().children(
+                    self.s3_remote_manager.read(cx).remotes().into_iter().map(
                         |(remote, s3_remote)| {
                             let entity = cx.weak_entity();
                             let _s3_remote = s3_remote.clone();
@@ -423,9 +451,9 @@ impl Rooter {
                                     this.new_tab(s3_remote.clone(), window, cx);
                                 }))
                         },
-                    )),
+                    ),
                 ),
-            )
+            ))
             .footer(
                 div()
                     .flex()

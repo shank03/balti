@@ -1,3 +1,4 @@
+use balti_s3::S3Remote;
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
     ActiveTheme, Icon, Sizable, StyledExt,
@@ -7,17 +8,12 @@ use gpui_component::{
 
 use crate::{
     nav::{BucketNav, TabId},
-    s3::S3Remote,
     ui::browse::BrowseUi,
 };
 
-pub enum BrowseNavEvent {
-    CreateFolder(SharedString),
-    UploadFiles(SharedString),
-    NewView(SharedString),
-}
+pub struct BrowseRefreshEvent(pub SharedString);
 pub struct BrowseNav;
-impl EventEmitter<BrowseNavEvent> for BrowseNav {}
+impl EventEmitter<BrowseRefreshEvent> for BrowseNav {}
 
 pub struct RemoteUi {
     s3_remote: S3Remote,
@@ -32,20 +28,18 @@ impl RemoteUi {
         let browse_nav = cx.new(|_| BrowseNav {});
 
         let nav_sub = cx.subscribe_in(&browse_nav, window, |this, _entity, event, window, cx| {
-            if let BrowseNavEvent::NewView(prefix) = event {
-                this.nav.update(cx, |nav, cx| {
-                    nav.push(
-                        BrowseUi::view(
-                            this.browse_nav.clone(),
-                            this.s3_remote.clone(),
-                            prefix.clone(),
-                            window,
-                            cx,
-                        ),
+            this.nav.update(cx, |nav, cx| {
+                nav.push(
+                    BrowseUi::view(
+                        this.browse_nav.clone(),
+                        this.s3_remote.clone(),
+                        event.0.clone(),
+                        window,
                         cx,
-                    );
-                });
-            }
+                    ),
+                    cx,
+                );
+            });
         });
 
         let nav = cx.new(|cx| {
@@ -77,7 +71,7 @@ impl RemoteUi {
 
 impl TabId for RemoteUi {
     fn id(&self) -> SharedString {
-        self.s3_remote.remote_name.clone()
+        SharedString::new(self.s3_remote.remote_name.clone())
     }
 }
 
@@ -168,38 +162,6 @@ impl Render for RemoteUi {
                                         )
                                 },
                             )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                Button::new("new_folder")
-                                    .icon(Icon::empty().path("icons/folder-plus.svg"))
-                                    .small()
-                                    .border_color(cx.theme().sidebar_border)
-                                    .outline()
-                                    .on_click(cx.listener(move |this, _ev, _window, cx| {
-                                        if let Some(prefix) =
-                                            this.nav.read(cx).active_view().cloned()
-                                        {
-                                            this.browse_nav.update(cx, |_nav, cx| {
-                                                cx.emit(BrowseNavEvent::CreateFolder(prefix));
-                                            });
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new("upload")
-                                    .icon(Icon::empty().path("icons/upload.svg"))
-                                    .small()
-                                    .primary()
-                                    .on_click(cx.listener(move |this, _ev, window, cx| {
-                                        todo!();
-                                        cx.notify();
-                                    })),
-                            ),
                     ),
             )
             .when_some(self.nav.read(cx).current_view().cloned(), |this, view| {

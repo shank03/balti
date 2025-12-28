@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use balti_s3::{S3Config, S3Remote};
 use gpui::*;
 use gpui_component::{
     Disableable, IconName, StyledExt, WindowExt,
@@ -7,14 +10,12 @@ use gpui_component::{
     input::{Input, InputState},
 };
 
-use crate::{config::S3Config, s3::S3Remote};
-
 pub trait RemoteDialog: Render {
     fn create_remote(
         &mut self,
         name: SharedString,
         config: S3Config,
-        old_remote: Option<SharedString>,
+        old_remote: Option<Arc<str>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -65,7 +66,7 @@ pub fn open_dialog<T: RemoteDialog>(
         secret_access_key_input_state.update(cx, |input, cx| {
             input.set_value(&r.config.secret_access_key, window, cx);
         });
-        if r.config.region != "auto" {
+        if r.config.region.as_ref() != "auto" {
             region_input_state.update(cx, |input, cx| {
                 input.set_value(&r.config.region, window, cx);
             });
@@ -97,7 +98,7 @@ pub fn open_dialog<T: RemoteDialog>(
 fn comp<T: RemoteDialog>(
     dialog: Dialog,
     entity: WeakEntity<T>,
-    old_remote: Option<SharedString>,
+    old_remote: Option<Arc<str>>,
     remote_name_input_state: Entity<InputState>,
     access_key_id_input_state: Entity<InputState>,
     secret_access_key_input_state: Entity<InputState>,
@@ -119,7 +120,11 @@ fn comp<T: RemoteDialog>(
         .keyboard(false)
         .overlay_closable(false)
         .rounded_lg()
-        .title("Create new remote")
+        .title(if old_remote.is_some() {
+            "Edit remote"
+        } else {
+            "Create new remote"
+        })
         .v_flex()
         .child(
             v_form()
@@ -196,11 +201,11 @@ fn comp<T: RemoteDialog>(
                     let bucket_name = _bucket_name_input_state.read(cx).value();
 
                     let config = S3Config {
-                        access_key_id,
-                        secret_access_key,
-                        region,
-                        endpoint,
-                        bucket_name,
+                        access_key_id: access_key_id.into(),
+                        secret_access_key: secret_access_key.into(),
+                        region: region.into(),
+                        endpoint: endpoint.into(),
+                        bucket_name: bucket_name.into(),
                     };
 
                     let _ = _entity.update(cx, |this, cx| {
@@ -234,11 +239,11 @@ fn comp<T: RemoteDialog>(
                     let bucket_name = bucket_name_input_state.read(cx).value();
 
                     let config = S3Config {
-                        access_key_id,
-                        secret_access_key,
-                        region,
-                        endpoint,
-                        bucket_name,
+                        access_key_id: access_key_id.into(),
+                        secret_access_key: secret_access_key.into(),
+                        region: region.into(),
+                        endpoint: endpoint.into(),
+                        bucket_name: bucket_name.into(),
                     };
 
                     let _ = entity.update(cx, |this, cx| {

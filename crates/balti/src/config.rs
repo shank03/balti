@@ -3,20 +3,30 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
-use gpui::SharedString;
+use balti_s3::S3Config;
+use chrono::Utc;
 
-use crate::err::{AppError, AppResult};
+use balti_err::{AppError, AppResult};
 
-#[derive(Debug, Clone)]
-pub struct S3Config {
-    pub access_key_id: SharedString,
-    pub secret_access_key: SharedString,
-    pub region: SharedString,
-    pub endpoint: SharedString,
-    pub bucket_name: SharedString,
+fn get_var(key: &'static str) -> String {
+    match std::env::var(key) {
+        Ok(var) => var,
+        Err(err) => {
+            let _ = AppError::err(err);
+            "NA".to_string()
+        }
+    }
+}
+
+pub fn get_version_var() -> String {
+    get_var("CARGO_PKG_VERSION")
+}
+
+pub fn get_sha_var() -> String {
+    get_var("BALTI_COMMIT_SHA")
 }
 
 const REMOTES_CONFIG: &str = "remotes.toml";
@@ -32,6 +42,16 @@ fn config_dir() -> &'static PathBuf {
             .join(".config")
             .join(APP_CONFIG_DIR)
     })
+}
+
+pub fn get_new_log_file_path() -> PathBuf {
+    let logs_dir = config_dir().join("logs");
+    if !logs_dir.exists() {
+        fs::create_dir_all(&logs_dir)
+            .map_err(|err| AppError::err(err))
+            .expect("Failed to create logs folder");
+    }
+    logs_dir.join(format!("balti_logs_{}.log", Utc::now()))
 }
 
 pub fn parse_s3_remotes() -> AppResult<HashMap<String, S3Config>> {
@@ -80,7 +100,7 @@ pub fn parse_s3_remotes() -> AppResult<HashMap<String, S3Config>> {
     Ok(remote_configs)
 }
 
-pub fn save_s3_remotes(remotes: BTreeMap<SharedString, S3Config>) {
+pub fn save_s3_remotes(remotes: BTreeMap<Arc<str>, S3Config>) {
     let config_path = config_dir().join(REMOTES_CONFIG);
     let mut file = File::create(&config_path).expect("Failed to create config file");
 
@@ -125,7 +145,7 @@ fn get_table_str(
     remote_name: &str,
     table: &toml::map::Map<String, toml::Value>,
     key: &'static str,
-) -> AppResult<SharedString> {
+) -> AppResult<Arc<str>> {
     table
         .get(key)
         .and_then(|v| v.as_str())

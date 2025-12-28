@@ -1,10 +1,12 @@
 [workspace]
-members = ["crates/balti"]
+members = ["crates/balti", "crates/balti-backend", "crates/balti-err", "crates/balti-s3"]
 default-members = ["crates/balti"]
 resolver = "2"
 
 [workspace.dependencies]
 balti = { path = "crates/balti" }
+balti-s3 = { path = "crates/balti-s3" }
+balti-err = { path = "crates/balti-err" }
 
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0.0"

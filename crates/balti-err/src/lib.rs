@@ -1,5 +1,3 @@
-use tokio::task::JoinError;
-
 pub type AppResult<T> = Result<T, AppError>;
 
 #[allow(warnings)]
@@ -49,11 +47,5 @@ impl AppError {
             message: format!("{}", err),
             req_id: "".into(),
         }
-    }
-}
-
-impl From<JoinError> for AppError {
-    fn from(value: JoinError) -> Self {
-        AppError::err(value)
     }
 }

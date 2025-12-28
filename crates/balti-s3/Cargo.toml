@@ -1,0 +1,14 @@
+[package]
+name = "balti-s3"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+balti-err.workspace = true
+
+chrono.workspace = true
+aws-sdk-s3 = { version = "1", features = [
+    "rt-tokio",
+    "behavior-version-latest",
+] }
+aws-config = { version = "1.8", features = ["behavior-version-latest"] }

@@ -25,7 +25,7 @@ impl GlobalTokio {
     }
 }
 
-pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, super::err::AppError>>>
+pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<balti_err::AppResult<R>>>
 where
     C: AppContext,
     Fut: Future<Output = R> + Send + 'static,
@@ -40,7 +40,7 @@ where
         cx.background_spawn(async move {
             let result = join.await;
             drop(cancel);
-            result.map_err(super::err::AppError::from)
+            result.map_err(|err| balti_err::AppError::err(err))
         })
     })
 }

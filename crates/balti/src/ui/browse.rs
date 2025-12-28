@@ -1,9 +1,12 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
+use balti_err::AppError;
+use balti_s3::{__S3Object, S3Object, S3Remote, TrimPrefix};
 use futures::StreamExt;
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable, StyledExt, VirtualListScrollHandle, WindowExt,
+    ActiveTheme, Disableable, Icon, IconName, Sizable, StyledExt, VirtualListScrollHandle,
+    WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -15,14 +18,13 @@ use gpui_component::{
 };
 
 use crate::{
-    err::AppError,
     nav::BrowsePrefix,
     rt,
-    s3::{self, S3Object, S3Remote, TrimPrefix},
     ui::{
         create_folder_dialog, delete_object_dialog,
-        remote::{BrowseNav, BrowseNavEvent},
+        remote::{BrowseNav, BrowseRefreshEvent},
     },
+    util,
 };
 
 pub struct BrowseUi {
@@ -30,16 +32,15 @@ pub struct BrowseUi {
     s3_remote: S3Remote,
     prefix: SharedString,
 
-    objects: Vec<Arc<S3Object>>,
+    objects: Vec<S3Object>,
     item_sizes: Rc<Vec<Size<Pixels>>>,
     objects_scroll_handle: VirtualListScrollHandle,
-    checked_objects: HashMap<SharedString, Arc<S3Object>>,
+    checked_objects: HashMap<Arc<str>, S3Object>,
 
     loading: bool,
     creating_folder: bool,
     deleting_objects: bool,
     error: Option<AppError>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl BrowseUi {
@@ -47,25 +48,9 @@ impl BrowseUi {
         browse_nav: Entity<BrowseNav>,
         s3_remote: S3Remote,
         prefix: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> Self {
-        let nav_sub = cx.subscribe_in(&browse_nav, window, |this, _entity, event, window, cx| {
-            match event {
-                BrowseNavEvent::CreateFolder(prefix) => {
-                    if &this.prefix == prefix {
-                        this.new_folder_dialog(window, cx)
-                    }
-                }
-                BrowseNavEvent::UploadFiles(prefix) => {
-                    if &this.prefix == prefix {
-                        // let a = 0;
-                    }
-                }
-                _ => (),
-            };
-        });
-
         Self {
             browse_nav,
             s3_remote,
@@ -78,7 +63,6 @@ impl BrowseUi {
             creating_folder: false,
             deleting_objects: false,
             error: None,
-            _subscriptions: vec![nav_sub],
         }
     }
 
@@ -101,7 +85,7 @@ impl BrowseUi {
         let prefix = self.prefix.clone();
 
         let task = rt::spawn(cx, async move {
-            s3::list_objects(remote, prefix.trim_start_matches('/')).await
+            balti_s3::list_objects(remote, prefix.trim_start_matches('/')).await
         });
 
         cx.spawn_in(window, async move |this, cx| {
@@ -154,6 +138,10 @@ impl BrowseUi {
             )
         });
     }
+
+    fn open_upload_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.push_notification(Notification::info("Coming soon (TM)"), cx);
+    }
 }
 
 impl create_folder_dialog::CreateFolderDialog for BrowseUi {
@@ -174,10 +162,9 @@ impl create_folder_dialog::CreateFolderDialog for BrowseUi {
                 .replace("..", "")
         );
 
-        let task = rt::spawn(
-            cx,
-            async move { s3::create_folder(remote, key.as_str()).await },
-        );
+        let task = rt::spawn(cx, async move {
+            balti_s3::create_folder(remote, key.as_str()).await
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let _ = this.update(cx, |this, cx| {
@@ -227,8 +214,12 @@ impl delete_object_dialog::DeleteObjectDialog for BrowseUi {
                 let remote = remote.clone();
                 async move {
                     match obj.as_ref() {
-                        S3Object::Folder(key) => s3::delete_folder(remote, key.as_str()).await,
-                        S3Object::File { key, .. } => s3::delete_file(remote, key.as_str()).await,
+                        __S3Object::Folder(key) => {
+                            balti_s3::delete_folder(remote, key.as_ref()).await
+                        }
+                        __S3Object::File { key, .. } => {
+                            balti_s3::delete_file(remote, key.as_ref()).await
+                        }
                     }
                 }
             });
@@ -295,7 +286,7 @@ impl delete_object_dialog::DeleteObjectDialog for BrowseUi {
 impl BrowsePrefix for BrowseUi {
     fn name(&self) -> SharedString {
         if self.prefix == "/" {
-            self.s3_remote.bucket_name.clone()
+            SharedString::from(self.s3_remote.bucket_name.clone())
         } else {
             self.prefix
                 .trim_matches('/')
@@ -400,6 +391,39 @@ impl BrowseUi {
                             this.child(format!("Total: {} item(s)", self.objects.len()))
                         }
                     }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                Button::new("new_folder")
+                                    .icon(Icon::empty().path("icons/folder-plus.svg"))
+                                    .label("Folder")
+                                    .small()
+                                    .border_color(cx.theme().sidebar_border)
+                                    .outline()
+                                    .disabled(
+                                        self.loading
+                                            || self.creating_folder
+                                            || self.deleting_objects,
+                                    )
+                                    .on_click(cx.listener(move |this, _ev, window, cx| {
+                                        this.new_folder_dialog(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("upload")
+                                    .icon(Icon::empty().path("icons/upload.svg"))
+                                    .label("Upload")
+                                    .small()
+                                    .primary()
+                                    .disabled(self.loading || self.deleting_objects)
+                                    .on_click(cx.listener(move |this, _ev, window, cx| {
+                                        this.open_upload_prompt(window, cx);
+                                    })),
+                            ),
+                    )
                 } else {
                     this.bg(cx.theme().primary)
                         .text_color(cx.theme().primary_foreground)
@@ -486,7 +510,7 @@ impl BrowseUi {
     fn render_object_item(
         &self,
         i: usize,
-        object: Arc<S3Object>,
+        object: S3Object,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let _object = object.clone();
@@ -544,11 +568,13 @@ impl BrowseUi {
                             })),
                     )
                     .child(match object.as_ref() {
-                        s3::S3Object::Folder(_) => Icon::new(IconName::Folder),
-                        s3::S3Object::File { .. } => Icon::empty().path("icons/file-digit.svg"),
+                        __S3Object::Folder(_) => Icon::new(IconName::Folder),
+                        __S3Object::File { .. } => Icon::empty().path("icons/file-digit.svg"),
                     })
                     .text_sm()
-                    .child(object.key().trim_key_prefix(self.prefix.as_str())),
+                    .child(SharedString::new(
+                        object.key().trim_key_prefix(self.prefix.as_str()),
+                    )),
             )
             .child(
                 div()
@@ -557,8 +583,8 @@ impl BrowseUi {
                     .gap_4()
                     .items_center()
                     .map(|this| match object.as_ref() {
-                        s3::S3Object::Folder(_) => this,
-                        s3::S3Object::File {
+                        __S3Object::Folder(_) => this,
+                        __S3Object::File {
                             size,
                             last_modified,
                             ..
@@ -568,21 +594,21 @@ impl BrowseUi {
                                 div()
                                     // i know this font won't exist for everyone
                                     .font_family("JetBrains Mono")
-                                    .child(size.to_string()),
+                                    .child(util::human_readable_size(*size)),
                             )
-                            .child(last_modified.clone().unwrap_or_default()),
+                            .child(SharedString::new(last_modified.clone().unwrap_or_default())),
                     }),
             )
             .map(|this| match object.as_ref() {
-                s3::S3Object::Folder(key) => {
-                    let prefix = key.clone();
+                __S3Object::Folder(key) => {
+                    let prefix = SharedString::new(key.clone());
                     this.on_click(cx.listener(move |this, _ev, _window, cx| {
                         this.browse_nav.update(cx, |_nav, cx| {
-                            cx.emit(BrowseNavEvent::NewView(prefix.clone()));
+                            cx.emit(BrowseRefreshEvent(prefix.clone()));
                         });
                     }))
                 }
-                s3::S3Object::File { .. } => this,
+                __S3Object::File { .. } => this,
             })
     }
 }
