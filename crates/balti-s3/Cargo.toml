@@ -2,6 +2,8 @@
 name = "balti-s3"
 version = "0.1.0"
 edition = "2024"
+authors = ["Shashank Verma <shank03>"]
+license = "MIT"
 
 [dependencies]
 balti-err.workspace = true

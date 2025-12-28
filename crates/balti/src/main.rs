@@ -27,13 +27,14 @@ fn get_window_options(cx: &mut App) -> WindowOptions {
         kind: WindowKind::Normal,
         window_decorations: Some(WindowDecorations::Client),
         tabbing_identifier: Some("Balti".into()),
+        app_id: Some("com.shank03.balti".into()),
         ..Default::default()
     }
 }
 
 fn set_menus(cx: &mut App) {
     cx.set_menus(vec![Menu {
-        name: "set_menus".into(),
+        name: SharedString::new("Balti"),
         items: vec![
             MenuItem::action("About Balti", ui::About),
             MenuItem::action("Check for updates", ui::CheckForUpdates),
@@ -63,13 +64,12 @@ fn main() {
     Application::new()
         .with_assets(assets::AppAssets)
         .run(|cx: &mut App| {
-            let window_options = get_window_options(cx);
-
+            set_menus(cx);
             rt::init(cx);
 
             cx.activate(true);
-            set_menus(cx);
 
+            let window_options = get_window_options(cx);
             cx.open_window(window_options, |win, cx| {
                 gpui_component::init(cx);
                 gpui_component::theme::init(cx);

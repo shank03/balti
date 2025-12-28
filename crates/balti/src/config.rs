@@ -11,23 +11,8 @@ use chrono::Utc;
 
 use balti_err::{AppError, AppResult};
 
-fn get_var(key: &'static str) -> String {
-    match std::env::var(key) {
-        Ok(var) => var,
-        Err(err) => {
-            let _ = AppError::err(err);
-            "NA".to_string()
-        }
-    }
-}
-
-pub fn get_version_var() -> String {
-    get_var("CARGO_PKG_VERSION")
-}
-
-pub fn get_sha_var() -> String {
-    get_var("BALTI_COMMIT_SHA")
-}
+pub const BALTI_VERSION: &str = env!("BALTI_VERSION");
+pub const BALTI_COMMIT_SHA: &str = env!("BALTI_COMMIT_SHA");
 
 const REMOTES_CONFIG: &str = "remotes.toml";
 

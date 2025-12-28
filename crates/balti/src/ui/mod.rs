@@ -105,13 +105,13 @@ impl Rooter {
     }
 
     fn open_about_dialog(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
-        let message = format!("Balti {}", config::get_version_var());
-        let detail = config::get_sha_var();
+        let message = format!("Balti {}", config::BALTI_VERSION);
+        let detail = config::BALTI_COMMIT_SHA;
 
         let task = window.prompt(
             PromptLevel::Info,
             message.as_str(),
-            Some(detail.as_str()),
+            Some(detail),
             &[PromptButton::Ok(SharedString::new_static("Ok"))],
             cx,
         );
@@ -128,10 +128,8 @@ impl Rooter {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let commit_sha = config::get_sha_var();
-
         let task = rt::spawn(cx, async move {
-            println!("todo: {commit_sha}");
+            println!("todo: {}", config::BALTI_COMMIT_SHA);
         });
 
         cx.spawn_in(window, async move |_this, _cx| {
